@@ -39,3 +39,34 @@ La aplicación permite al usuario cliente:
 * Notificar sobre el pedido vía mensaje de Whatsapp utilizando el link de la aplicación
 
 Actualmente la aplicación puede ser corrida en mi maquina de forma local sin inconvenientes y cumple con los requisitos de la materia para, a futuro, por realizar los test y demás etapas del trabajo.
+
+## Decisiones a la hora de Contenerizar
+
+### Imágenes base elegidas
+* Base de datos — postgres:16-alpine
+Se eligió la imagen oficial de PostgreSQL en su variante Alpine por su tamaño reducido y por su version fija que nos garantiza la reproducibilidad.
+
+* Backend Go — golang:1.26-alpine → alpine:latest
+
+Stage 1 (build): golang:1.26-alpine — contiene todo lo necesario que Go necesita para compilar. Solo existe durante el build.
+Stage 2 (final): alpine:latest — imagen mínima de ~5 MB que solo recibe el binario ya compilado. Sin Go, sin código fuente, sin dependencias de compilación.
+
+* Frontend React/Vite — node:20-alpine → nginx:alpine
+
+Stage 1 (build): node:20-alpine — ejecuta npm install y npm run build para generar los assets estáticos. Solo existe durante el build.
+Stage 2 (final): nginx:alpine — imagen mínima que sirve los archivos estáticos compilados (/dist) y actúa como proxy inverso hacia el backend.
+
+Utilizamos MultiStage ya que las herramientas de compilacion no deben estar en produccion.
+
+### Lo que persiste del contenedor
+El volumen postgres_data se declara en la sección volumes: del docker-compose.yml y sobrevive a docker compose down.
+
+## Dockerización
+
+Las imagenes que cree para mi backend y mi frontend fueron creadas para procesadores AMD.
+
+## Uso de IA
+Para la realizacion del TP me ayude de la inteligencia artificial para definir las imagenes base que utilizo en los dockerfile. 
+Me ayude tambien con algunos comando para el dockerfile del front en la parte de ngix. Me sirvio para aclarar algunas dudas.
+Tambien tuve un inconveniente al correr las imagenes descargadas del registry y me ayudo a solucionarlo. Aunque basicamente me recomendo borrarlas y volverlas a subir.
+

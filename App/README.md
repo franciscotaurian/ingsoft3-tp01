@@ -2,12 +2,154 @@
 
 Aplicación web para un restaurante desarrollada para la materia Ingeniería de Software III (Pipeline CI/CD).
 
+## Configuración de Variables de Entorno
+
+Antes de levantar la aplicación, se debe crear el archivo `.env` en la raíz del proyecto (`App/`):
+
+```bash
+cp .env.example .env
+```
+
+Luego editar `.env` con los valores deseados:
+
+```env
+# Base de datos PostgreSQL
+DB_HOST=db
+DB_PORT=5432
+DB_USER=postgres
+DB_PASSWORD=postgres
+DB_NAME=catalogo
+
+# Administrador del Panel Admin
+ADMIN_USER=admin
+ADMIN_PASSWORD=admin123
+
+# Número de WhatsApp del restaurante (código país + número sin espacios)
+WHATSAPP_NUMBER=5491112345678
+```
+
+> **Nota:** `DB_HOST=db` hace referencia al nombre del servicio de base de datos dentro de la red Docker. No se debe cambiar al levantar con Docker Compose.
+
+---
+
+## Levantar la Aplicación con Docker
+
+### Requisito previo
+
+Tener instalado [Docker](https://docs.docker.com/get-docker/) con el plugin Docker Compose (versión v2+).
+
+---
+
+### Opción A — Compilando las imágenes localmente (desarrollo)
+
+Usa `docker-compose.yml`. Compila el backend en Go y el frontend en Node.js directamente desde el código fuente local.
+
+```bash
+# 1. Crear el archivo de entorno
+cp .env.example .env
+
+# 2. Construir las imágenes y levantar los contenedores
+sudo docker compose up -d --build
+```
+
+La aplicación estará disponible en: **http://localhost**
+
+Para detener y eliminar los contenedores:
+
+```bash
+sudo docker compose down
+```
+
+---
+
+### Opción B — Descargando las imágenes desde el Registry (producción)
+
+Usa `docker-compose.registry.yml`. Descarga las imágenes ya compiladas directamente desde **GitHub Container Registry (GHCR)** sin necesidad de tener Go ni Node.js instalados.
+
+```bash
+# 1. Crear el archivo de entorno
+cp .env.example .env
+
+# 2. Levantar descargando las imágenes publicadas
+sudo docker compose -f docker-compose.registry.yml up -d --pull always
+```
+
+La aplicación estará disponible en: **http://localhost**
+
+Para detener:
+
+```bash
+sudo docker compose -f docker-compose.registry.yml down
+```
+
+#### Imágenes publicadas en GHCR
+
+| Servicio | Imagen |
+|----------|--------|
+| Backend  | `ghcr.io/franciscotaurian/realico-comidas-backend:v0.1.0` |
+| Frontend | `ghcr.io/franciscotaurian/realico-comidas-frontend:v0.1.0` |
+
+---
+
+## Comandos Docker Útiles
+
+```bash
+# Ver contenedores en ejecución
+sudo docker ps
+
+# Ver logs de un contenedor
+sudo docker logs realico_comidas_backend
+sudo docker logs realico_comidas_frontend
+sudo docker logs realico_comidas_db
+
+# Ver todas las imágenes locales
+sudo docker images
+
+# Eliminar todos los contenedores detenidos
+sudo docker container prune -f
+
+# Eliminar imágenes sin uso
+sudo docker image prune -a -f
+
+# Limpiar todo el sistema Docker (contenedores, imágenes, redes, volúmenes)
+sudo docker system prune -a --volumes -f
+```
+
+---
+
+## Ejecución sin Docker (desarrollo local)
+
+### Requisitos Previos
+- PostgreSQL corriendo localmente con una base de datos creada (ej: `catalogo`)
+- Go ≥ 1.22
+- Node.js ≥ 18
+
+### Backend (Go)
+```bash
+cd backend
+cp .env.example .env
+# Editar .env con DB_HOST=localhost
+go mod download
+go run main.go
+```
+*El backend escuchará en `http://localhost:8080` y ejecutará la migración de tablas automáticamente en PostgreSQL.*
+
+### Frontend (React + Vite)
+```bash
+cd frontend
+npm install
+npm run dev
+```
+*El frontend escuchará en `http://localhost:5173`.*
+
+---
 ## Stack Tecnológico
 
 - **Backend**: Go (framework Gin + ORM GORM)
 - **Base de Datos**: PostgreSQL
-- **Frontend**: React + Vite (JavaScript)
+- **Frontend**: React + Vite (JavaScript) servido por Nginx
 - **Configuración**: Variables de entorno mediante `.env`
+- **Contenedores**: Docker + Docker Compose
 
 ---
 
@@ -49,56 +191,33 @@ Las dependencias se conectan de abajo hacia arriba sin variables globales:
 
 ---
 
-## Configuración y Variables de Entorno
+## Arquitectura Docker
 
-### Backend (`backend/.env`)
-```env
-DB_HOST=localhost
-DB_PORT=5432
-DB_USER=postgres
-DB_PASSWORD=postgres
-DB_NAME=catalogo
+La aplicación se compone de **3 contenedores** orquestados con Docker Compose:
 
-ADMIN_USER=admin
-ADMIN_PASSWORD=admin123
-
-WHATSAPP_NUMBER=5491112345678
-
-PORT=8080
+```
+┌─────────────────────────────────────────────────────────┐
+│                      Docker Network                      │
+│                                                         │
+│  ┌─────────────────┐        ┌──────────────────────┐   │
+│  │    frontend      │──/api/─▶      backend          │   │
+│  │  (Nginx:alpine)  │        │  (Go binary:alpine)  │   │
+│  │   Puerto 80      │        │    Puerto 8080        │   │
+│  └────────┬─────────┘        └──────────┬───────────┘   │
+│           │                             │               │
+│    Expuesto al host                     │               │
+│    localhost:80                         ▼               │
+│                              ┌──────────────────────┐   │
+│                              │         db            │   │
+│                              │  (postgres:16-alpine) │   │
+│                              │    Puerto 5432        │   │
+│                              └──────────────────────┘   │
+└─────────────────────────────────────────────────────────┘
 ```
 
-### Frontend (`frontend/.env`)
-```env
-VITE_API_URL=http://localhost:8080
-VITE_WHATSAPP_NUMBER=5491112345678
-```
-
----
-
-## Comandos para Compilar y Ejecutar
-
-### 1. Requisitos Previos
-- PostgreSQL corriendo localmente con una base de datos creada (ej: `catalogo`).
-- Go ≥ 1.22
-- Node.js ≥ 18
-
-### 2. Levantar el Backend (Go)
-```bash
-cd backend
-cp .env.example .env
-go mod download
-go run main.go
-```
-*El backend escuchará en `http://localhost:8080` y ejecutará la migración de tablas automáticamente en PostgreSQL.*
-
-### 3. Levantar el Frontend (React + Vite)
-```bash
-cd frontend
-cp .env.example .env
-npm install
-npm run dev
-```
-*El frontend escuchará en `http://localhost:5173`.*
+- El **frontend** (Nginx) actúa como proxy inverso: las peticiones a `/api/` se redirigen internamente al contenedor `backend:8080`.
+- El **backend** espera a que la base de datos esté lista (`healthcheck`) antes de iniciar.
+- Los datos de PostgreSQL persisten en un **volumen Docker** (`postgres_data`).
 
 ---
 
