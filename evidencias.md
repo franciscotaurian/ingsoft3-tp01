@@ -19,13 +19,13 @@ Release publicada con el comentario que describe lo que incluye la version.
 # Evidencias tp2
 
 ## 1. Diferencias tamaño de imagenes
-![Tamaño de imagenes](Diferencias_tamaño_imagenes.png)
+![Tamaño de imagenes](img/Diferencias_tamaño_imagenes.png)
 
 ## 2. Docker compose up
-![ComposeUp](Docker_up.png)
+![ComposeUp](img/Docker_up.png)
 
 ## 3. Persistencia de datos
-![Sistema con datos](Persistencia_de_datos.png)
+![Sistema con datos](img/Persistencia_de_datos.png)
 
 ## 4. Imagenes publicadas
-![Imagenes publicadas en registry](Imagenes_subidas.png)
+![Imagenes publicadas en registry](img/Imagenes_subidas.png)
