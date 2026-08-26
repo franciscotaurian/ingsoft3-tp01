@@ -64,9 +64,9 @@ func main() {
 	api := r.Group("/api")
 	{
 		// --- Rutas Públicas ---
-		api.GET("/products", productHandler.GetAvailable)   // Solo productos con stock > 0
+		api.GET("/products", productHandler.GetAvailable) // Solo productos con stock > 0
 		api.GET("/categories", categoryHandler.GetAll)
-		api.POST("/orders", orderHandler.Create)            // Crear pedido (valida stock y teléfono)
+		api.POST("/orders", orderHandler.Create) // Crear pedido (valida stock y teléfono)
 
 		// --- Rutas de Admin (Protegidas: valida credenciales contra tabla 'admins' en DB) ---
 		admin := api.Group("/admin")
