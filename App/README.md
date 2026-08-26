@@ -1,5 +1,7 @@
 # Realico Comidas - Catálogo y Pedidos
 
+[![CI](https://github.com/franciscotaurian/ingsoft3-tp01/actions/workflows/ci.yml/badge.svg)](https://github.com/franciscotaurian/ingsoft3-tp01/actions/workflows/ci.yml)
+
 Aplicación web para un restaurante desarrollada para la materia Ingeniería de Software III (Pipeline CI/CD).
 
 ## Configuración de Variables de Entorno
