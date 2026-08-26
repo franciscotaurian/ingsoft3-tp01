@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	_ "libreria_no_existe"
 	"log"
 
 	"realico-comidas-backend/config"
