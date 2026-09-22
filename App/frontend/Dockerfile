@@ -8,7 +8,11 @@ RUN npm install
 COPY . .
 RUN npm run build
 
-# ---- Etapa 2: runtime (imagen con Nginx) ----
+# ---- Etapa 2: tests ----
+FROM build AS test
+ENTRYPOINT ["npm", "run", "test:ci"]
+
+# ---- Etapa 3: runtime (imagen con Nginx) ----
 FROM nginx:alpine AS final
 WORKDIR /usr/share/nginx/html
 

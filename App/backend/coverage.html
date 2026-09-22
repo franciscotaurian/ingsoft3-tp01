@@ -1,0 +1,530 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>service: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">realico-comidas-backend/service/category_service.go (71.0%)</option>
+				
+				<option value="file1">realico-comidas-backend/service/order_service.go (85.7%)</option>
+				
+				<option value="file2">realico-comidas-backend/service/product_service.go (46.0%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">not covered</span>
+				<span class="cov8">covered</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">package service
+
+import (
+        "errors"
+        "strings"
+
+        "realico-comidas-backend/models"
+        "realico-comidas-backend/repository"
+)
+
+var (
+        ErrCategoryNameRequired = errors.New("el nombre de la categoría no puede estar vacío")
+        ErrCategoryHasProducts  = errors.New("no se puede eliminar la categoría porque tiene productos asociados")
+        ErrCategoryNotFound     = errors.New("categoría no encontrada")
+)
+
+type CategoryService interface {
+        GetAll() ([]models.Category, error)
+        GetByID(id uint) (*models.Category, error)
+        Create(name string) (*models.Category, error)
+        Update(id uint, name string) (*models.Category, error)
+        Delete(id uint) error
+}
+
+type categoryService struct {
+        repo repository.CategoryRepository
+}
+
+func NewCategoryService(repo repository.CategoryRepository) CategoryService <span class="cov8" title="1">{
+        return &amp;categoryService{repo: repo}
+}</span>
+
+func (s *categoryService) GetAll() ([]models.Category, error) <span class="cov0" title="0">{
+        return s.repo.FindAll()
+}</span>
+
+func (s *categoryService) GetByID(id uint) (*models.Category, error) <span class="cov0" title="0">{
+        return s.repo.FindByID(id)
+}</span>
+
+func (s *categoryService) Create(name string) (*models.Category, error) <span class="cov8" title="1">{
+        cleanName := strings.TrimSpace(name)
+        if cleanName == "" </span><span class="cov8" title="1">{
+                return nil, ErrCategoryNameRequired
+        }</span>
+
+        <span class="cov8" title="1">category := &amp;models.Category{
+                Name: cleanName,
+        }
+
+        err := s.repo.Create(category)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov8" title="1">return category, nil</span>
+}
+
+func (s *categoryService) Update(id uint, name string) (*models.Category, error) <span class="cov8" title="1">{
+        cleanName := strings.TrimSpace(name)
+        if cleanName == "" </span><span class="cov8" title="1">{
+                return nil, ErrCategoryNameRequired
+        }</span>
+
+        <span class="cov8" title="1">existing, err := s.repo.FindByID(id)
+        if err != nil </span><span class="cov8" title="1">{
+                return nil, ErrCategoryNotFound
+        }</span>
+
+        <span class="cov0" title="0">existing.Name = cleanName
+        err = s.repo.Update(existing)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">return existing, nil</span>
+}
+
+func (s *categoryService) Delete(id uint) error <span class="cov8" title="1">{
+        _, err := s.repo.FindByID(id)
+        if err != nil </span><span class="cov8" title="1">{
+                return ErrCategoryNotFound
+        }</span>
+
+        // Regla R7: No se puede eliminar una categoría con productos asociados
+        <span class="cov8" title="1">hasProducts, err := s.repo.HasProducts(id)
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+        <span class="cov8" title="1">if hasProducts </span><span class="cov8" title="1">{
+                return ErrCategoryHasProducts
+        }</span>
+
+        <span class="cov8" title="1">return s.repo.Delete(id)</span>
+}
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">package service
+
+import (
+        "errors"
+        "fmt"
+        "regexp"
+        "strings"
+
+        "realico-comidas-backend/models"
+        "realico-comidas-backend/repository"
+)
+
+// phoneRegex acepta solo dígitos numéricos (sin espacios, guiones ni caracteres especiales).
+var phoneRegex = regexp.MustCompile(`^\d+$`)
+
+var (
+        ErrCustomerDataRequired = errors.New("los datos del cliente (nombre, teléfono, dirección) son obligatorios")
+        ErrOrderNoItems         = errors.New("el pedido debe contener al menos un producto")
+        ErrInvalidStatusChange  = errors.New("transición de estado no permitida")
+        ErrOrderNotFound        = errors.New("pedido no encontrado")
+        ErrInvalidPhone         = errors.New("el teléfono debe contener solo números (sin espacios ni caracteres especiales)")
+)
+
+type CreateOrderItemDTO struct {
+        ProductID uint `json:"product_id"`
+        Quantity  int  `json:"quantity"`
+}
+
+type CreateOrderDTO struct {
+        CustomerName    string               `json:"customer_name"`
+        CustomerPhone   string               `json:"customer_phone"`
+        CustomerAddress string               `json:"customer_address"`
+        Items           []CreateOrderItemDTO `json:"items"`
+}
+
+type OrderService interface {
+        GetAll() ([]models.Order, error)
+        GetByID(id uint) (*models.Order, error)
+        Create(dto CreateOrderDTO) (*models.Order, error)
+        UpdateStatus(id uint, newStatus string) (*models.Order, error)
+        GetMetrics() (*repository.MetricsData, error)
+}
+
+type orderService struct {
+        orderRepo   repository.OrderRepository
+        productRepo repository.ProductRepository
+}
+
+func NewOrderService(orderRepo repository.OrderRepository, productRepo repository.ProductRepository) OrderService <span class="cov8" title="1">{
+        return &amp;orderService{
+                orderRepo:   orderRepo,
+                productRepo: productRepo,
+        }
+}</span>
+
+func (s *orderService) GetAll() ([]models.Order, error) <span class="cov0" title="0">{
+        return s.orderRepo.FindAll()
+}</span>
+
+func (s *orderService) GetByID(id uint) (*models.Order, error) <span class="cov0" title="0">{
+        return s.orderRepo.FindByID(id)
+}</span>
+
+func (s *orderService) Create(dto CreateOrderDTO) (*models.Order, error) <span class="cov8" title="1">{
+        // Validar que todos los datos del cliente estén presentes
+        cleanName := strings.TrimSpace(dto.CustomerName)
+        cleanPhone := strings.TrimSpace(dto.CustomerPhone)
+        cleanAddress := strings.TrimSpace(dto.CustomerAddress)
+
+        if cleanName == "" || cleanPhone == "" || cleanAddress == "" </span><span class="cov8" title="1">{
+                return nil, ErrCustomerDataRequired
+        }</span>
+
+        // Validar que el teléfono contenga solo dígitos numéricos
+        <span class="cov8" title="1">if !phoneRegex.MatchString(cleanPhone) </span><span class="cov8" title="1">{
+                return nil, ErrInvalidPhone
+        }</span>
+
+        <span class="cov8" title="1">if len(dto.Items) == 0 </span><span class="cov8" title="1">{
+                return nil, ErrOrderNoItems
+        }</span>
+
+        <span class="cov8" title="1">var total float64
+        orderItems := make([]models.OrderItem, 0, len(dto.Items))
+        stockUpdates := make(map[uint]int)
+
+        for _, itemDTO := range dto.Items </span><span class="cov8" title="1">{
+                if itemDTO.Quantity &lt;= 0 </span><span class="cov8" title="1">{
+                        return nil, fmt.Errorf("la cantidad del producto debe ser mayor a cero")
+                }</span>
+
+                <span class="cov8" title="1">product, err := s.productRepo.FindByID(itemDTO.ProductID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("el producto con ID %d no existe", itemDTO.ProductID)
+                }</span>
+
+                // Regla R4: Validar que la cantidad no supere el stock disponible
+                <span class="cov8" title="1">if itemDTO.Quantity &gt; product.Stock </span><span class="cov8" title="1">{
+                        return nil, fmt.Errorf("no hay suficiente stock para '%s' (disponible: %d, solicitado: %d)",
+                                product.Name, product.Stock, itemDTO.Quantity)
+                }</span>
+
+                // Regla R8: Snapshot del precio unitario al momento del pedido
+                <span class="cov8" title="1">unitPrice := product.Price
+                itemTotal := unitPrice * float64(itemDTO.Quantity)
+                total += itemTotal // Regla R5: Cálculo del total
+
+                orderItems = append(orderItems, models.OrderItem{
+                        ProductID: product.ID,
+                        Quantity:  itemDTO.Quantity,
+                        UnitPrice: unitPrice,
+                })
+
+                // Regla R3: Calcular el nuevo stock a descontar
+                stockUpdates[product.ID] = product.Stock - itemDTO.Quantity</span>
+        }
+
+        <span class="cov8" title="1">order := &amp;models.Order{
+                CustomerName:    cleanName,
+                CustomerPhone:   cleanPhone,
+                CustomerAddress: cleanAddress,
+                Total:           total,
+                Status:          models.OrderStatusPendiente,
+                Items:           orderItems,
+        }
+
+        err := s.orderRepo.CreateWithTx(order, stockUpdates)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov8" title="1">return s.orderRepo.FindByID(order.ID)</span>
+}
+
+func (s *orderService) UpdateStatus(id uint, newStatus string) (*models.Order, error) <span class="cov8" title="1">{
+        order, err := s.orderRepo.FindByID(id)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, ErrOrderNotFound
+        }</span>
+
+        // Regla R6: Transiciones de estado permitidas:
+        // pendiente -&gt; confirmado
+        // confirmado -&gt; entregado
+        <span class="cov8" title="1">currentStatus := order.Status
+        isValid := false
+
+        if currentStatus == models.OrderStatusPendiente &amp;&amp; newStatus == models.OrderStatusConfirmado </span><span class="cov8" title="1">{
+                isValid = true
+        }</span> else<span class="cov8" title="1"> if currentStatus == models.OrderStatusConfirmado &amp;&amp; newStatus == models.OrderStatusEntregado </span><span class="cov8" title="1">{
+                isValid = true
+        }</span>
+
+        <span class="cov8" title="1">if !isValid </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf("%w: no se puede cambiar de '%s' a '%s'", ErrInvalidStatusChange, currentStatus, newStatus)
+        }</span>
+
+        <span class="cov8" title="1">err = s.orderRepo.UpdateStatus(id, newStatus)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov8" title="1">return s.orderRepo.FindByID(id)</span>
+}
+
+func (s *orderService) GetMetrics() (*repository.MetricsData, error) <span class="cov0" title="0">{
+        return s.orderRepo.GetMetrics()
+}</span>
+</pre>
+		
+		<pre class="file" id="file2" style="display: none">package service
+
+import (
+        "errors"
+        "strings"
+
+        "realico-comidas-backend/models"
+        "realico-comidas-backend/repository"
+)
+
+var (
+        ErrProductNameRequired = errors.New("el nombre del producto no puede estar vacío")
+        ErrProductInvalidPrice = errors.New("el precio debe ser mayor a 0")
+        ErrProductInvalidStock = errors.New("el stock no puede ser negativo")
+        ErrProductNotFound     = errors.New("producto no encontrado")
+)
+
+type CreateProductDTO struct {
+        Name        string  `json:"name"`
+        Description string  `json:"description"`
+        Price       float64 `json:"price"`
+        Stock       int     `json:"stock"`
+        CategoryID  uint    `json:"category_id"`
+        ImageURL    string  `json:"image_url"`
+}
+
+type UpdateProductDTO struct {
+        Name        string  `json:"name"`
+        Description string  `json:"description"`
+        Price       float64 `json:"price"`
+        Stock       int     `json:"stock"`
+        CategoryID  uint    `json:"category_id"`
+        ImageURL    string  `json:"image_url"`
+}
+
+type ProductService interface {
+        GetAll() ([]models.Product, error)
+        GetAvailable() ([]models.Product, error)
+        GetByID(id uint) (*models.Product, error)
+        Create(dto CreateProductDTO) (*models.Product, error)
+        Update(id uint, dto UpdateProductDTO) (*models.Product, error)
+        Delete(id uint) error
+}
+
+type productService struct {
+        productRepo  repository.ProductRepository
+        categoryRepo repository.CategoryRepository
+}
+
+func NewProductService(productRepo repository.ProductRepository, categoryRepo repository.CategoryRepository) ProductService <span class="cov8" title="1">{
+        return &amp;productService{
+                productRepo:  productRepo,
+                categoryRepo: categoryRepo,
+        }
+}</span>
+
+func (s *productService) GetAll() ([]models.Product, error) <span class="cov0" title="0">{
+        return s.productRepo.FindAll()
+}</span>
+
+func (s *productService) GetAvailable() ([]models.Product, error) <span class="cov0" title="0">{
+        // Regla R1: Solo productos con stock &gt; 0
+        return s.productRepo.FindAvailable()
+}</span>
+
+func (s *productService) GetByID(id uint) (*models.Product, error) <span class="cov0" title="0">{
+        return s.productRepo.FindByID(id)
+}</span>
+
+func (s *productService) Create(dto CreateProductDTO) (*models.Product, error) <span class="cov8" title="1">{
+        cleanName := strings.TrimSpace(dto.Name)
+        if cleanName == "" </span><span class="cov8" title="1">{
+                return nil, ErrProductNameRequired
+        }</span>
+        <span class="cov8" title="1">if dto.Price &lt;= 0 </span><span class="cov8" title="1">{
+                return nil, ErrProductInvalidPrice
+        }</span>
+        <span class="cov8" title="1">if dto.Stock &lt; 0 </span><span class="cov8" title="1">{
+                return nil, ErrProductInvalidStock
+        }</span>
+
+        // Validación: un producto debe tener una categoría asignada
+        <span class="cov0" title="0">if dto.CategoryID == 0 </span><span class="cov0" title="0">{
+                return nil, errors.New("debe asignarse una categoría al producto")
+        }</span>
+
+        // Verificar que la categoría exista en la base de datos
+        <span class="cov0" title="0">_, err := s.categoryRepo.FindByID(dto.CategoryID)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, errors.New("la categoría especificada no existe")
+        }</span>
+
+        <span class="cov0" title="0">product := &amp;models.Product{
+                Name:        cleanName,
+                Description: strings.TrimSpace(dto.Description),
+                Price:       dto.Price,
+                Stock:       dto.Stock,
+                CategoryID:  dto.CategoryID,
+                ImageURL:    strings.TrimSpace(dto.ImageURL),
+        }
+
+        err = s.productRepo.Create(product)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">return s.productRepo.FindByID(product.ID)</span>
+}
+
+func (s *productService) Update(id uint, dto UpdateProductDTO) (*models.Product, error) <span class="cov8" title="1">{
+        cleanName := strings.TrimSpace(dto.Name)
+        if cleanName == "" </span><span class="cov8" title="1">{
+                return nil, ErrProductNameRequired
+        }</span>
+        <span class="cov8" title="1">if dto.Price &lt;= 0 </span><span class="cov8" title="1">{
+                return nil, ErrProductInvalidPrice
+        }</span>
+        <span class="cov8" title="1">if dto.Stock &lt; 0 </span><span class="cov8" title="1">{
+                return nil, ErrProductInvalidStock
+        }</span>
+
+        // Validación: un producto debe tener una categoría asignada
+        <span class="cov8" title="1">if dto.CategoryID == 0 </span><span class="cov0" title="0">{
+                return nil, errors.New("debe asignarse una categoría al producto")
+        }</span>
+
+        <span class="cov8" title="1">existing, err := s.productRepo.FindByID(id)
+        if err != nil </span><span class="cov8" title="1">{
+                return nil, ErrProductNotFound
+        }</span>
+
+        <span class="cov0" title="0">_, err = s.categoryRepo.FindByID(dto.CategoryID)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, errors.New("la categoría especificada no existe")
+        }</span>
+
+        <span class="cov0" title="0">existing.Name = cleanName
+        existing.Description = strings.TrimSpace(dto.Description)
+        existing.Price = dto.Price
+        existing.Stock = dto.Stock
+        existing.CategoryID = dto.CategoryID
+        existing.ImageURL = strings.TrimSpace(dto.ImageURL)
+
+        err = s.productRepo.Update(existing)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">return s.productRepo.FindByID(id)</span>
+}
+
+func (s *productService) Delete(id uint) error <span class="cov8" title="1">{
+        _, err := s.productRepo.FindByID(id)
+        if err != nil </span><span class="cov8" title="1">{
+                return ErrProductNotFound
+        }</span>
+        <span class="cov8" title="1">return s.productRepo.Delete(id)</span>
+}
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>

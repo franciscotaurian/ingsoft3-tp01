@@ -32,5 +32,5 @@ El proyecto implementa de manera progresiva las siguientes prácticas del ciclo 
 *   **Continuous Deployment (CD):** Gestión de entornos, despliegue de imágenes mediante GitHub Container Registry (GHCR) y deployment patterns.
 *   **Operaciones:** Observabilidad, DevSecOps y Continuous Feedback.
 
-
+# Modificacion
 
