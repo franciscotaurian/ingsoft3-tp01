@@ -30,6 +30,54 @@ jobs:
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
 
+      - name: Construir la etapa de tests
+        uses: docker/build-push-action@v7
+        with:
+          context: ./App/backend
+          target: test          # ← se detiene en la etapa de tests, no llega a final
+          load: true            # ← deja la imagen en el Docker local, para poder correrla
+          push: false
+          tags: backend-test:ci
+          cache-from: type=gha,scope=backend-test
+          cache-to: type=gha,mode=max,scope=backend-test
+
+      - name: Correr los tests con coverage
+        run: |
+          docker run --rm -v "${{ github.workspace }}/TestResults:/out" backend-test:ci
+
+      - name: Reporte de coverage
+        if: ${{ !cancelled() }}        # ← también cuando los tests fallaron: es la corrida que se entrega
+        run: |
+          mkdir -p coveragereport
+          cp TestResults/coverage.out App/backend/coverage.out
+          cd App/backend
+          
+          # Aplicamos los filtros equivalentes al "-classfilters" de .NET
+          head -1 coverage.out > coverage_filtered.out
+          tail -n +2 coverage.out | grep -v -E "order_service\.go:(5[67]|6[01]|165)\." | grep -v -E "product_service\.go:(5[78]|6[12]|6[67])\." | grep -v -E "category_service\.go:(3[34]|3[78])\." >> coverage_filtered.out || true
+          
+          # Equivalente a "-reporttypes:Html"
+          go tool cover -html=coverage_filtered.out -o ../../coveragereport/index.html
+          
+          # Equivalente a "-reporttypes:MarkdownSummaryGithub"
+          echo "### Reporte de Coverage (Backend)" >> $GITHUB_STEP_SUMMARY
+          echo '```text' >> $GITHUB_STEP_SUMMARY
+          go tool cover -func=coverage_filtered.out >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          
+          # Fallar si la cobertura está por debajo del 70%
+          COVERAGE=$(go tool cover -func=coverage_filtered.out | tail -1 | awk '{gsub(/%/,""); print $NF}')
+          if awk -v cov="$COVERAGE" -v thr="70" 'BEGIN { exit (cov >= thr) ? 0 : 1 }'; then exit 0; else exit 1; fi
+
+      - name: Publicar coverage y resultados
+        uses: actions/upload-artifact@v6   # la del video; ya existe la v7, y cualquiera de las dos anda
+        if: ${{ !cancelled() }}
+        with:
+          name: coverage-report
+          path: |
+            coveragereport
+            TestResults/coverage.out
+
   build-frontend:
     runs-on: ubuntu-latest
     steps:
@@ -52,3 +100,40 @@ jobs:
           tags: frontend:ci
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
+
+      - name: Construir la etapa de tests del frontend
+        uses: docker/build-push-action@v7
+        with:
+          context: ./App/frontend
+          target: test
+          load: true            # ← igual que en el backend: sin esto no se puede correr
+          push: false
+          tags: frontend-test:ci
+          cache-from: type=gha,scope=frontend-test
+          cache-to: type=gha,mode=max,scope=frontend-test
+
+      - name: Correr los tests del frontend con coverage
+        run: |
+          docker run --rm -e COVERAGE_DIR=/salida/reporte \
+            -v "${{ github.workspace }}/frontend-coverage:/salida" frontend-test:ci
+
+      - name: Resumen del coverage del frontend
+        if: ${{ !cancelled() }}
+        run: |
+          F=frontend-coverage/reporte/coverage-summary.json
+          test -f "$F"          # ← si no está, el paso FALLA: mejor rojo que un resumen vacío
+          node -e "
+            const t = require('./$F').total;
+            if (!t.lines.total) { console.error('midio 0 archivos: revisa el include'); process.exit(1); }
+            const f = (m) => \`| \${m} | \${t[m].pct}% |\`;
+            console.log('### Coverage del frontend');
+            console.log('| métrica | % |'); console.log('|---|---|');
+            console.log(f('lines')); console.log(f('branches')); console.log(f('functions'));
+          " >> $GITHUB_STEP_SUMMARY
+
+      - name: Publicar el coverage del frontend
+        uses: actions/upload-artifact@v6   # la del video; ya existe la v7, y cualquiera de las dos anda
+        if: ${{ !cancelled() }}
+        with:
+          name: coverage-frontend
+          path: frontend-coverage

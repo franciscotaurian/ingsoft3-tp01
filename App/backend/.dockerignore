@@ -10,6 +10,3 @@ main.exe
 # ---- 3. Directorios de control de versiones y documentación ----
 .gitignore
 README.md
-
-# ---- 4. Archivos temporales o de test de Go ----
-*.test
