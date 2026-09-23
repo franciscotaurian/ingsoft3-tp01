@@ -19,6 +19,7 @@ type OrderRepository interface {
 	FindByID(id uint) (*models.Order, error)
 	CreateWithTx(order *models.Order, stockUpdates map[uint]int) error
 	UpdateStatus(id uint, status string) error
+	UpdateTotal(id uint, newTotal float64) error
 	GetMetrics() (*MetricsData, error)
 }
 
@@ -65,6 +66,10 @@ func (r *orderRepository) CreateWithTx(order *models.Order, stockUpdates map[uin
 
 func (r *orderRepository) UpdateStatus(id uint, status string) error {
 	return r.db.Model(&models.Order{}).Where("id = ?", id).Update("status", status).Error
+}
+
+func (r *orderRepository) UpdateTotal(id uint, newTotal float64) error {
+	return r.db.Model(&models.Order{}).Where("id = ?", id).Update("total", newTotal).Error
 }
 
 func (r *orderRepository) GetMetrics() (*MetricsData, error) {
