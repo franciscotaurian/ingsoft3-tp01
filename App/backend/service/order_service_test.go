@@ -297,3 +297,80 @@ func TestUpdateStatus_TransicionInvalidaEsRechazada(t *testing.T) {
 		})
 	}
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test 8 — CancelOrder: Éxito (Estado Pendiente)
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestCancelOrder_Success(t *testing.T) {
+	// Arrange
+	mockOrderRepo := &MockOrderRepository{}
+	order := &models.Order{ID: 1, Status: models.OrderStatusPendiente}
+
+	mockOrderRepo.On("FindByID", uint(1)).Return(order, nil)
+	mockOrderRepo.On("UpdateStatus", uint(1), models.OrderStatusCancelado).Return(nil)
+
+	svc := NewOrderService(mockOrderRepo, &MockProductRepository{})
+
+	// Act
+	resultado, err := svc.CancelOrder(1)
+
+	// Assert
+	assert.NoError(t, err)
+	assert.NotNil(t, resultado)
+	mockOrderRepo.AssertExpectations(t)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test 9 — CancelOrder: Caso de error - Pedido no existe
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestCancelOrder_NotFound(t *testing.T) {
+	// Arrange
+	mockOrderRepo := &MockOrderRepository{}
+	
+	// Simulamos que el repositorio devuelve error al buscar
+	mockOrderRepo.On("FindByID", uint(1)).Return((*models.Order)(nil), ErrOrderNotFound)
+
+	svc := NewOrderService(mockOrderRepo, &MockProductRepository{})
+
+	// Act
+	_, err := svc.CancelOrder(1)
+
+	// Assert
+	assert.ErrorIs(t, err, ErrOrderNotFound)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test 10 — CancelOrder: Caso de error (Parametrizado) - Estado inválido
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestCancelOrder_InvalidStatus(t *testing.T) {
+	casos := []struct {
+		nombre       string
+		estadoActual string
+	}{
+		{"cancelar_confirmado", models.OrderStatusConfirmado},
+		{"cancelar_entregado", models.OrderStatusEntregado},
+		{"cancelar_cancelado", models.OrderStatusCancelado},
+	}
+
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			// Arrange
+			mockOrderRepo := &MockOrderRepository{}
+			order := &models.Order{ID: 1, Status: c.estadoActual}
+			
+			// FindByID devuelve la orden con el estado actual
+			mockOrderRepo.On("FindByID", uint(1)).Return(order, nil)
+
+			svc := NewOrderService(mockOrderRepo, &MockProductRepository{})
+
+			// Act
+			_, err := svc.CancelOrder(1)
+
+			// Assert
+			assert.ErrorIs(t, err, ErrInvalidStatusChange)
+		})
+	}
+}

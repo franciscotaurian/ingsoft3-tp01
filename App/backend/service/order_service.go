@@ -40,6 +40,7 @@ type OrderService interface {
 	Create(dto CreateOrderDTO) (*models.Order, error)
 	UpdateStatus(id uint, newStatus string) (*models.Order, error)
 	ApplyDiscount(id uint, percentage float64) (*models.Order, error)
+	CancelOrder(id uint) (*models.Order, error)
 	GetMetrics() (*repository.MetricsData, error)
 }
 
@@ -171,6 +172,7 @@ func (s *orderService) ApplyDiscount(id uint, percentage float64) (*models.Order
 	}
 
 	// Camino 2: Verificar que el pedido exista
+func (s *orderService) CancelOrder(id uint) (*models.Order, error) {
 	order, err := s.orderRepo.FindByID(id)
 	if err != nil {
 		return nil, ErrOrderNotFound
@@ -187,6 +189,12 @@ func (s *orderService) ApplyDiscount(id uint, percentage float64) (*models.Order
 	order.Total = order.Total - discount
 
 	err = s.orderRepo.UpdateTotal(id, order.Total)
+	// Solo se pueden cancelar pedidos en estado "pendiente"
+	if order.Status != models.OrderStatusPendiente {
+		return nil, fmt.Errorf("%w: no se puede cancelar un pedido en estado '%s'", ErrInvalidStatusChange, order.Status)
+	}
+
+	err = s.orderRepo.UpdateStatus(id, models.OrderStatusCancelado)
 	if err != nil {
 		return nil, err
 	}
