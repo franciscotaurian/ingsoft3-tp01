@@ -231,9 +231,9 @@ Lo que este freno no detecta: tests con aserciones débiles o incorrectas. Si un
 
 ## Url's
 
-https://github.com/franciscotaurian/ingsoft3-tp01/pull/23(Corrida roja por cobertura)
+https://github.com/franciscotaurian/ingsoft3-tp01/pull/23 (Corrida roja por cobertura)
 https://github.com/franciscotaurian/ingsoft3-tp01/pull/22 (Corrida verde con reporte)
-https://github.com/franciscotaurian/ingsoft3-tp01/pull/27 (PR abierto en rojo por cobertura)
+https://github.com/franciscotaurian/ingsoft3-tp01/pull/25 (PR abierto en rojo por cobertura)
 
 ## Refactorizacion para mockear
 
