@@ -19,6 +19,7 @@ var (
 	ErrInvalidStatusChange  = errors.New("transición de estado no permitida")
 	ErrOrderNotFound        = errors.New("pedido no encontrado")
 	ErrInvalidPhone         = errors.New("el teléfono debe contener solo números (sin espacios ni caracteres especiales)")
+	ErrInvalidDiscount      = errors.New("el porcentaje de descuento debe estar entre 1 y 100")
 )
 
 type CreateOrderItemDTO struct {
@@ -39,6 +40,7 @@ type OrderService interface {
 	Create(dto CreateOrderDTO) (*models.Order, error)
 	UpdateStatus(id uint, newStatus string) (*models.Order, error)
 	CancelOrder(id uint) (*models.Order, error)
+	ApplyDiscount(id uint, percentage float64) (*models.Order, error)
 	GetMetrics() (*repository.MetricsData, error)
 }
 
@@ -175,6 +177,36 @@ func (s *orderService) CancelOrder(id uint) (*models.Order, error) {
 	}
 
 	err = s.orderRepo.UpdateStatus(id, models.OrderStatusCancelado)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.orderRepo.FindByID(id)
+}
+
+func (s *orderService) ApplyDiscount(id uint, percentage float64) (*models.Order, error) {
+	// Camino 1: Validar que el porcentaje sea un valor útil y posible (1% - 100%)
+	if percentage <= 0 || percentage > 100 {
+		return nil, ErrInvalidDiscount
+	}
+
+	// Camino 2: Verificar que el pedido exista
+	order, err := s.orderRepo.FindByID(id)
+	if err != nil {
+		return nil, ErrOrderNotFound
+	}
+
+	// Camino 3: Solo se puede descontar un pedido en estado "pendiente";
+	// un pedido ya confirmado o entregado ya fue cobrado
+	if order.Status != models.OrderStatusPendiente {
+		return nil, fmt.Errorf("%w: no se puede aplicar descuento a un pedido en estado '%s'", ErrInvalidStatusChange, order.Status)
+	}
+
+	// Camino 4 (éxito): Recalcular el total aplicando el descuento
+	discount := order.Total * (percentage / 100)
+	order.Total = order.Total - discount
+
+	err = s.orderRepo.UpdateTotal(id, order.Total)
 	if err != nil {
 		return nil, err
 	}
