@@ -164,5 +164,121 @@ No tuve inconvenientes a la hora de realizar el práctico. Siguiendo el video de
 
 Utilice inteligencia artificial para comprender con mayor detalle por construir via Dockerfile y no utilizar compilación nativa. El resto del trabajo pude realizarlo sin incovenientes.
 
+# Decisiones TP5
 
+## Qué lógica elegí testear y por qué
 
+Enfoqué los tests en la **capa de servicios del backend** (`order_service.go`, `product_service.go`, `category_service.go`) y en los **módulos de lógica pura del frontend** (`pedido.js`, `client.js`).
+
+La razon por la que se eligieron estas capas es por su importancia de la logica de negocio. Un error o bug en alguno de estos componentes pone en riesgo la integridad de los datos del sistema y el posible incumplimiento con el cliente. Por lo tanto es fundamental validar esta capa.
+
+En el frontend, testear los componentes visuales de React no aportaba mucho valor real porque son capas de presentación. Lo que sí aporta valor es testear la lógica de armado del pedido (`pedido.js`) y el módulo que se comunica con la API (`client.js`).
+
+## Umbral de coverage
+
+**Backend:** Umbral de **70% sobre sentencias** (`statements`), que es la métrica nativa de `go tool cover`.
+
+Elegí ese número porque es el umbral estándar que balancea exigencia real con practicidad. Tenía funciones puras de delegación (como `GetAll` y `GetByID`) que no tienen lógica de bifurcación, simplemente llaman al repositorio y devuelven el resultado. Incluirlas en la cuenta habría sido injusto penalizarían el porcentaje sin aportar seguridad real.
+
+Filtrando esas funciones, la cobertura real sobre el código que importa fue de **71.2%**.
+
+Sobre **ramas** (`branches`): no usé esa métrica como umbral en el backend porque `go tool cover` no la expone directamente de forma nativa. Sin embargo, revisando el reporte HTML manualmente, estimé que la cobertura de ramas ronda el **65%**, lo cual es coherente con que hay varios caminos del tipo `if err != nil` que no ejercita ningún test.
+
+**Frontend:** Umbral de **80% sobre líneas, funciones, ramas y sentencias** configurado vía Vitest. La cobertura real cerró en **97.22%** porque los módulos testeados son pequeños y su lógica está muy acotada.
+
+## Qué dejé afuera de la cuenta de cobertura
+
+**Backend:**
+
+- **`main.go`:** Es el punto de arranque de la aplicación. Inicializa la base de datos, levanta el servidor y conecta las dependencias. No tiene lógica de negocio testeable y no puede testearse de forma unitaria (requeriría una base de datos real corriendo).
+- **Capa de repositorios (`repository/`):** Son adaptadores a la base de datos. Testearlos requeriría una base de datos real corriendo (test de integración), lo cual está fuera del alcance de este TP.
+- **Capa de handlers (`handler/`):** Son los controladores HTTP. Testearlos implicaría levantar el servidor completo, lo cual también es un test de integración.
+- **Modelos (`models/`):** Son structs de datos puros sin lógica. No hay nada que testear.
+- **"Thin wrappers" de servicios:** Funciones como `GetAll()`, `GetByID()` o `GetMetrics()` que simplemente hacen `return s.repo.MétodoX(...)`. No tienen bifurcación ni regla de negocio: son pasamanos entre el handler y el repositorio. Se excluyeron filtrando sus líneas del archivo `.out` de cobertura antes de calcular el porcentaje.
+
+**Frontend:**
+
+- **Componentes React (`.jsx`):** Son capas de presentación. Testearlos requeriría herramientas extras como `@testing-library/react` y en la práctica testean más el renderizado visual que la lógica de negocio.
+- La herramienta se configuró para apuntar únicamente a `src/pedido.js` y `src/client.js` mediante el atributo `include` de la configuración de Vitest.
+
+## Por qué coverage alto no garantiza calidad
+
+Un test puede ejecutar todas las líneas de una función y aun así no verificar nada útil.
+
+**Ejemplo concreto en la app:** La función `CancelOrder` tiene un camino de éxito donde actualiza el estado del pedido a "cancelado" y lo retorna. Un test que llame a `svc.CancelOrder(1)` y solo verifique `assert.NoError(err)` le daría al reporte un 100% de cobertura en esa función. Sin embargo, si la función por algún bug guardara el estado "confirmado" en vez de "cancelado", ese test seguiría pasando. La cobertura no detectaría el error porque nunca verificó *qué* guardó, solo que no tiró una excepción.
+
+Por eso, en nuestros tests siempre verificamos el comportamiento esperado y no solo la ausencia de error. Por ejemplo, `mockOrderRepo.AssertExpectations(t)` verifica que el mock fue llamado exactamente con los argumentos correctos.
+
+## Pull Request bloqueado
+
+Para demostrar el freno del pipeline, implementé la funcionalidad `CancelOrder` (con 3 caminos de ejecución distintos) y la subí **sin tests** en un Pull Request.
+
+El check `build-backend` se puso en **rojo** con este mensaje en el log:
+
+```text
+Cobertura (sin thin wrappers): 65.2%
+Umbral exigido              : 70%
+❌ Cobertura insuficiente — el build es ROJO
+```
+
+Para solucionarlo, escribí los tests TestCancelOrder_Success, TestCancelOrder_NotFound y TestCancelOrder_InvalidStatus, que ejercitan los tres caminos de la función. La cobertura subió a 71.2% y el pipeline volvió a verde. Ese PR fue mergeado.
+
+Luego escribi una nueva funcionalidad `ApplyDiscount`, con el mismo objetico -que de cobertura insufisiente-. Actualmente este PR con ApplyDiscount sin tests queda abierto y en rojo hasta la defensa, con el botón de merge desactivado.
+
+Este freno es cualitativamente distinto al del TP4. En el TP4, el pipeline verificaba únicamente que el código compilara: si el build era verde, el PR podía mergearse. Un desarrollador podía eliminar todos los tests o escribir código completamente sin testear y el pipeline no lo detectaba. En el TP5, el pipeline tiene una segunda compuerta que verifica que el código nuevo esté cubierto por tests. Escribir código sin tests, aunque compile perfectamente, bloquea el merge.
+
+Lo que este freno no detecta: tests con aserciones débiles o incorrectas. Si un test llama a la función pero no verifica el resultado con precisión, el pipeline se pone verde aunque el test no proteja nada real.
+
+## Url's
+
+https://github.com/franciscotaurian/ingsoft3-tp01/pull/23(Corrida roja por cobertura)
+https://github.com/franciscotaurian/ingsoft3-tp01/pull/22 (Corrida verde con reporte)
+https://github.com/franciscotaurian/ingsoft3-tp01/pull/27 (PR abierto en rojo por cobertura)
+
+## Refactorizacion para mockear
+
+La aplicación ya estaba organizada con inyección de dependencias desde el TP2, por lo que no fue necesario refactorizar para habilitar los mocks. Cada servicio recibe sus repositorios por el constructor (NewOrderService(orderRepo, productRepo)), lo cual permite sustituirlos por dobles de prueba en los tests sin tocar el código de producción.
+
+## Reglas de negocio agregadas
+La aplicación ya tenía lógica de negocio real (validación de stock, formato de teléfono, transiciones de estado de pedidos). Sin embargo, para el ejercicio del freno de cobertura, agregué dos funcionalidades nuevas:
+
+- CancelOrder: Permite al administrador cancelar un pedido, pero solo si está en estado pendiente. Si ya está confirmado o entregado, retorna un error de transición inválida.
+- ApplyDiscount: Permite al administrador aplicar un descuento porcentual al total de un pedido pendiente. Valida que el porcentaje esté entre 1 y 100, que el pedido exista, y que no haya sido ya procesado.
+
+## Stack utilizado
+
+| Qué hace falta | En .NET (cátedra) | En nuestra app (Go + Vitest) |
+|---|---|---|
+| Test parametrizado | `[Theory]` + `[InlineData]` de xUnit | *Table-driven tests*: un `[]struct{...}` iterado con `t.Run()` |
+| Doble (Mock) | Moq | `github.com/stretchr/testify/mock` |
+| Medidor de cobertura | `coverlet` integrado en `dotnet test` | `go test -coverprofile` + `go tool cover` |
+| Umbral que frena el build | `/p:Threshold=70` en el `ENTRYPOINT` del Dockerfile | Script bash con `awk` en el `ci.yml` que hace `exit 1` si el porcentaje es < 70 |
+| Filtro de qué entra en la cuenta | `/p:Exclude=[DemoApi]Program*` en el `ENTRYPOINT` | `grep -v -E` sobre el archivo `.out` crudo en el `ci.yml` |
+
+## Camino no cubierto
+
+Inspeccionando el reporte HTML generado por go tool cover -html=coverage.out, identifiqué el siguiente camino no cubierto en product_service.go:
+
+Línea: 75: if dto.Price <= 0 { return nil, ErrProductInvalidPrice }
+Entrada concreta que lo recorrería: Llamar a svc.Create(CreateProductDTO{Name: "Empanada", Price: -5.0, Stock: 10, CategoryID: 1}). Con un precio negativo, la validación debería fallar y retornar ErrProductInvalidPrice.
+Qué decidí hacer: No agregué el test. Los tests existentes sobre Create de productos cubren el camino de nombre vacío y de categoría inexistente, que son las reglas de negocio más críticas. El camino del precio negativo es importante pero, dado que ya superamos el umbral del 70% con holgura, lo dejé documentado como deuda técnica. Si el umbral fuera del 80%, sería el primer test a agregar.
+
+## Problemas Encontrados
+
+- Go no tiene flags nativas para umbral ni para excluir archivos. A diferencia de .NET con coverlet, go test no permite decirle "falla si la cobertura es menor al 70%" ni "excluí este paquete". Lo resolví completamente desde el ci.yml usando herramientas nativas de Linux (grep, awk) sobre el archivo de cobertura crudo que genera Docker.
+
+- Conflicto en el PR de ApplyDiscount. Había creado la rama sobre un main desactualizado, por lo que al hacer el PR aparecieron conflictos con la rama que ya tenía CancelOrder mergeada. Lo resolví cerrando el PR sin mergear, borrando la rama remota desde GitHub, haciendo git pull en main local para actualizarlo, y recreando la rama desde el main actualizado.
+
+## Declaración de uso de IA
+
+Utilicé Antigravity (IA) como asistente de desarrollo durante todo el TP5. El rol de la IA fue de par de programación: propuse decisiones, la IA las implementó, y yo verifiqué y aprobé cada paso.
+
+- Implementó el código de los tests en order_service_test.go, product_service_test.go y category_service_test.go.
+- Reescribió el ci.yml completo, traduciendo la lógica de .NET a Go/Bash.
+- Agregó las etapas test a los Dockerfiles del backend y del frontend.
+- Implementó el código de las funcionalidades CancelOrder y ApplyDiscount.
+Cómo lo verifiqué:
+
+Corrí localmente ./check_coverage.sh después de cada cambio para confirmar que el porcentaje subía o bajaba según lo esperado.
+Leí cada test generado y puedo explicar qué verifica cada assert. Por ejemplo, TestCreate_LlamaAlRepositorioConStockDescontado no verifica el valor de retorno: verifica que CreateWithTx fue llamado con el mapa {1: 7} (stock original 10 menos la cantidad pedida 3), usando AssertExpectations. Si la fórmula de descuento cambiara, ese test se rompería.
+Identifiqué qué casos no están cubiertos: el camino de precio negativo en ProductService.Create (documentado en la sección anterior) y los errores de persistencia en base de datos (cuando el repositorio falla al guardar), que requieren mocks más complejos.
