@@ -13,17 +13,10 @@ FROM build AS test
 ENTRYPOINT ["npm", "run", "test:ci"]
 
 # ---- Etapa 3: runtime (imagen con Nginx) ----
-FROM nginx:alpine AS final
-WORKDIR /usr/share/nginx/html
-
-# Borramos los archivos por defecto de Nginx
-RUN rm -rf ./*
-
-# Copiamos la carpeta 'dist' compilada en la etapa 1
-COPY --from=build /app/dist .
-
-# Copiamos como plantilla: nginx:alpine aplica envsubst al iniciar, reemplazando ${BACKEND_URL}
-COPY nginx.conf /etc/nginx/templates/default.conf.template
-
+FROM nginx:alpine
+COPY default.conf.template /etc/nginx/templates/default.conf.template
+COPY --from=build /app/dist /usr/share/nginx/html
+ENV BACKEND_URL=http://backend:8080 \
+    DNS_RESOLVER=127.0.0.11
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
