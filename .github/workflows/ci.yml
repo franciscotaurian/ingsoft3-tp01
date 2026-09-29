@@ -199,7 +199,7 @@ jobs:
             # tope, `curl` no tiene límite y puede quedarse esperando en CADA
             # vuelta hasta que el job muera por el límite del runner — no por tu
             # entorno, y el error no lo dice.
-            if curl -fsS --max-time 10 "$URL_API/health" \
+            if curl -fsS --max-time 10 "$URL_API/api/health" \
                && curl -fsS --max-time 10 "$URL_API/api/products" > /dev/null \
                && curl -fsS --max-time 10 "$URL_FRONT/" > /dev/null; then
               echo "✅ QA responde (API + BD + front)"; exit 0
