@@ -22,8 +22,8 @@ RUN rm -rf ./*
 # Copiamos la carpeta 'dist' compilada en la etapa 1
 COPY --from=build /app/dist .
 
-# Copiamos nuestra configuración personalizada de Nginx
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Copiamos como plantilla: nginx:alpine aplica envsubst al iniciar, reemplazando ${BACKEND_URL}
+COPY nginx.conf /etc/nginx/templates/default.conf.template
 
 EXPOSE 80
-ENTRYPOINT ["nginx", "-g", "daemon off;"]
+CMD ["nginx", "-g", "daemon off;"]

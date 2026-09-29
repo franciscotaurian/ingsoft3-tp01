@@ -34,6 +34,8 @@ services:
   frontend:
     image: ghcr.io/franciscotaurian/realico-comidas-frontend:v0.1.0
     container_name: realico_comidas_frontend
+    environment:
+      - BACKEND_URL=${BACKEND_URL}
     ports:
       - "80:80"
     depends_on:
