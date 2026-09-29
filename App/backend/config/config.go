@@ -8,6 +8,7 @@ import (
 )
 
 type Config struct {
+	DatabaseURL    string
 	DBHost         string
 	DBPort         string
 	DBUser         string
@@ -24,6 +25,7 @@ func LoadConfig() (*Config, error) {
 	_ = godotenv.Load()
 
 	cfg := &Config{
+		DatabaseURL:    getEnv("DATABASE_URL", ""),
 		DBHost:         getEnv("DB_HOST", "localhost"),
 		DBPort:         getEnv("DB_PORT", "5432"),
 		DBUser:         getEnv("DB_USER", "postgres"),
@@ -39,6 +41,9 @@ func LoadConfig() (*Config, error) {
 }
 
 func (c *Config) GetDSN() string {
+	if c.DatabaseURL != "" {
+		return c.DatabaseURL
+	}
 	return fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable",
 		c.DBHost, c.DBUser, c.DBPassword, c.DBName, c.DBPort)
 }
