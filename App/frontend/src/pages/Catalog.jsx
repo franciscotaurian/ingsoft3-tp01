@@ -126,7 +126,7 @@ export default function Catalog() {
   return (
     <div className="catalog-layout">
       <div className="catalog-main">
-        <h2>Catálogo de Comidas</h2>
+        <h2>Catálogo de Comidas - Realico 2026</h2>
         <p style={{ marginBottom: '1.5rem', color: '#666' }}>
           Selecciona tus platos favoritos y realiza tu pedido directamente por WhatsApp.
         </p>
