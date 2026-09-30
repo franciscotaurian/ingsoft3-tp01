@@ -227,8 +227,8 @@ jobs:
       - name: Smoke test PROD
         shell: bash
         env:               # ⚠️ TUS URLs de PROD: el loop es el mismo que el de QA
-          URL_API: https://miapp-api-prod.onrender.com
-          URL_FRONT: https://miapp-front-prod.onrender.com
+          URL_API: https://miapp-api-prod-5djk.onrender.com
+          URL_FRONT: https://miapp-front-prod-kdsx.onrender.com/m
         run: |
           for i in $(seq 1 30); do
             # 🔴 EL `--max-time` VA ACÁ, que es donde puede colgarse. Un servicio
