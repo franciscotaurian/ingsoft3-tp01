@@ -18,6 +18,7 @@ type Config struct {
 	AdminPassword  string
 	WhatsAppNumber string
 	Port           string
+	Version        string
 }
 
 func LoadConfig() (*Config, error) {
@@ -35,6 +36,7 @@ func LoadConfig() (*Config, error) {
 		AdminPassword:  getEnv("ADMIN_PASSWORD", "admin123"),
 		WhatsAppNumber: getEnv("WHATSAPP_NUMBER", "5491112345678"),
 		Port:           getEnv("PORT", "8080"),
+		Version:        getEnv("APP_VERSION", "v6.0.1"),
 	}
 
 	return cfg, nil

@@ -55,8 +55,9 @@ func main() {
 	// Ruta de salud
 	r.GET("/api/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{
-			"status": "ok",
-			"app":    "Realico Comidas API",
+			"status":  "ok",
+			"app":     "Realico Comidas API",
+			"version": cfg.Version,
 		})
 	})
 
