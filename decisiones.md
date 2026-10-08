@@ -282,3 +282,175 @@ Cómo lo verifiqué:
 Corrí localmente ./check_coverage.sh después de cada cambio para confirmar que el porcentaje subía o bajaba según lo esperado.
 Leí cada test generado y puedo explicar qué verifica cada assert. Por ejemplo, TestCreate_LlamaAlRepositorioConStockDescontado no verifica el valor de retorno: verifica que CreateWithTx fue llamado con el mapa {1: 7} (stock original 10 menos la cantidad pedida 3), usando AssertExpectations. Si la fórmula de descuento cambiara, ese test se rompería.
 Identifiqué qué casos no están cubiertos: el camino de precio negativo en ProductService.Create (documentado en la sección anterior) y los errores de persistencia en base de datos (cuando el repositorio falla al guardar), que requieren mocks más complejos.
+
+# Decisiones TP6
+
+## Enlaces de este TP
+
+### Paquetes públicos del registry
+- **Backend:** https://github.com/franciscotaurian/ingsoft3-tp01/pkgs/container/ingsoft3-tp01-backend
+- **Frontend:** https://github.com/franciscotaurian/ingsoft3-tp01/pkgs/container/ingsoft3-tp01-frontend
+
+
+### Cadena de evidencia del registry
+- **Corrida de PR — "Entrar al registry" salteado:** https://github.com/franciscotaurian/ingsoft3-tp01/actions/runs/36577456147
+- **Corrida de main — "Construir y publicar la imagen" como último step:** https://github.com/franciscotaurian/ingsoft3-tp01/actions/runs/36578043434
+
+### URLs de los entornos en vivo
+| Entorno | Frontend | Backend |
+|---|---|---|
+| **QA** | https://ingsoft3-tp01.onrender.com | https://miapp-api-qa-w60e.onrender.com |
+| **PROD** | https://miapp-front-prod-kdsx.onrender.com | https://miapp-api-prod-5djk.onrender.com |
+
+---
+
+## Por qué el artefacto se publica solo con la verificación en verde
+
+El pipeline tiene una cadena de dependencias explícitas en el `ci.yml`: el job `deploy-qa` tiene `needs: [build-backend, build-frontend]`, y el step de publicación dentro de cada job de build solo llega a ejecutarse si todos los steps anteriores (compilación y tests) terminaron con éxito. Si los tests fallan, el job se marca en rojo y los steps siguientes nunca se ejecutan.
+
+Si se publicara aunque los tests fallen, el registry dejaría de ser una fuente de verdad. Cualquier imagen ahí podría tener bugs conocidos y habría perdido el sentido de usarlo como artefacto verificado. El registry vale como garantía justamente porque solo llegan imágenes que pasaron por el pipeline completo.
+
+La misma lógica aplica a la rama: la condición `push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}` garantiza que solo los commits que llegaron a `main` (es decir, que pasaron por una PR con CI verde) generan una imagen publicada. Un commit de una rama de feature nunca produce un paquete en el registry.
+
+
+## Continuous Delivery vs. Continuous Deployment
+
+Implementé **Continuous Delivery**, no Continuous Deployment.
+
+La diferencia está en el último paso: en Continuous Deployment, cada commit verde se despliega automáticamente en producción sin intervención humana. En Continuous Delivery, el pipeline automatiza todo hasta tener el artefacto listo en un entorno de QA verificado, pero el pase final a producción requiere una aprobación manual explícita.
+
+Esta decisión es apropiada para el contexto de este proyecto porque:
+- Producción tiene usuarios reales del restaurante. Un deploy automático fuera de horario o con un cambio no validado por el negocio podría interrumpir pedidos activos.
+- El equipo es pequeño (un solo desarrollador), lo que hace que la aprobación manual sea liviana y no un cuello de botella burocrático.
+- El restaurante tiene ventanas operativas claras (mediodía y noche), lo que hace que el deploy tenga que coincidir con un horario específico, algo que una aprobación manual garantiza y un deploy automático no.
+
+---
+
+## Diseño de la cadena: needs / if / environments y alcance de los secrets
+
+El pipeline tiene cuatro jobs encadenados:
+
+```
+build-backend ──┐
+                ├──► deploy-qa ──► deploy-prod
+build-frontend ─┘
+```
+
+- **`build-backend` y `build-frontend`**: corren en paralelo en cualquier evento (PR o push). Validan compilación y tests. El step de publicación al registry tiene `if: github.event_name == 'push'` para saltear el login en PRs, y la condición `push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}` para que solo main genere imagen.
+
+- **`deploy-qa`**: tiene `needs: [build-backend, build-frontend]` (no corre si algún build falla) y `if: github.ref == 'refs/heads/main'` (no corre en PRs). Usa los secrets `RENDER_HOOK_API_QA` y `RENDER_HOOK_FRONT_QA` que viven en el environment `qa` de GitHub. Dispara el deploy del commit verificado usando `&ref=$GITHUB_SHA` y luego ejecuta el smoke test con reintentos.
+
+- **`deploy-prod`**: tiene `needs: deploy-qa` (solo corre si QA está vivo) y `environment: production`. Este environment tiene un required reviewer configurado en GitHub: el workflow se pausa aquí hasta que el aprobador da el OK o lo rechaza. Los secrets `RENDER_HOOK_API_PROD` y `RENDER_HOOK_FRONT_PROD` están encapsulados en el scope del environment `production` y son inaccesibles para los jobs anteriores.
+
+**Por qué el alcance de los secrets importa**: los secrets de producción solo pueden ser leídos por jobs que corren bajo el environment `production`. Esto garantiza que ningún job de build ni de QA pueda accidentalmente (o maliciosamente) disparar un deploy a producción. El aprobador, al aprobar, también está autorizando que esos secrets se expongan a ese job específico.
+
+---
+
+## Qué mira el aprobador antes de aprobar (criterios del gate)
+
+Antes de aprobar el pase a producción, el aprobador verifica:
+
+1. **QA está vivo y en verde**: el smoke test del job `deploy-qa` terminó con `✅ QA responde (API + BD + front)`. Si el smoke test falló, el gate de producción ni siquiera está disponible.
+2. **Las funcionalidades validadas por el equipo de QA**: se realizó una prueba manual en el entorno de QA (navegando la app, cargando un pedido, verificando el flujo de admin) y el Product Manager dio el OK explícito.
+3. **Ventana operativa**: el deploy se realiza en el horario permitido (tarde, entre el servicio del mediodía y el servicio nocturno del restaurante). No se aprueban pases en fin de semana ni fuera del horario de soporte.
+4. **Sin cambios destructivos pendientes**: si el commit incluye migraciones de base de datos irreversibles, se verifica previamente que existe un plan de rollback de datos.
+
+## La letra chica del free tier y cómo la maneja el pipeline
+
+**Render (free tier):**
+- **Cold start**: el backend tarda entre 30 y 60 segundos en despertar cuando no recibió tráfico en los últimos 15 minutos. El smoke test maneja esto con un loop de hasta 30 reintentos con `sleep 20` entre cada uno (hasta 10 minutos de espera total) y `--max-time 10` por cada `curl` para no colgarse si el servicio acepta la conexión pero no responde.
+- **Sleep automático**: los servicios gratuitos se duermen tras 15 minutos sin tráfico. Para la defensa, conviene abrir las URLs manualmente antes para que estén despiertas.
+- **Minutos de build**: el free tier de Render incluye 750 horas/mes de compute. Cada deploy de backend tarda aproximadamente 2 minutos (el binario ya está compilado por GitHub Actions, pero Render reconstruye desde el repo).
+
+**Neon (free tier):**
+- La base de datos nunca se apaga (el proyecto free de Neon tiene una instancia activa permanente). No hay cold start en la BD.
+- El límite es de almacenamiento (0.5 GB) y compute hours, que con el volumen de este proyecto no se alcanzan.
+
+
+## Garantía perdida: Render reconstruye desde el repo en vez de usar la imagen verificada
+
+Actualmente el pipeline dispara un deploy hook de Render que le pide a Render que construya el commit `$GITHUB_SHA` desde el código fuente. Esto significa que Render hace su propio `docker build` en sus servidores.
+
+La garantía que se pierde es la siguiente: la imagen que corre en QA y en PROD **no es exactamente la misma imagen que el pipeline verificó y publicó en GHCR**. Son imágenes construidas del mismo commit, pero compiladas en entornos diferentes (el runner de GitHub Actions vs los builders de Render). En teoría, el resultado debería ser idéntico, pero pueden diferir si alguna dependencia externa no está pineada con un hash exacto, si hay diferencias en el sistema operativo del builder, o si Render usa una capa de caché desactualizada.
+
+## Qué prueba el smoke test y qué no
+
+**Lo que prueba:**
+- `GET /api/health` responde HTTP 200: el proceso del backend arrancó y el servidor HTTP está escuchando.
+- `GET /api/products` responde HTTP 200: el backend está conectado a la base de datos (esta ruta hace una query real) y devuelve una respuesta válida.
+- `GET /` del frontend responde HTTP 200: el contenedor de Nginx está vivo y sirve el HTML de la SPA.
+
+**Lo que NO prueba:**
+- Que la versión desplegada sea la del commit verificado (hasta antes de agregar `version` al health check, era imposible saberlo solo con el smoke test). A partir del commit donde se agregó `APP_VERSION` al endpoint `/api/health`, la respuesta incluye el campo `"version": "v6.0.1"` que permite verificarlo manualmente, aunque el smoke test no valida este campo explícitamente. Aunque luego fue eliminado con un rollback de produccion.
+- Que la lógica de negocio funcione end-to-end (crear un pedido, descontar stock, etc.).
+- Que el frontend esté conectado correctamente al backend de ese entorno (podría estar apuntando al backend equivocado y el smoke test pasaría igual).
+- Que no haya regresiones visuales ni de UX.
+
+## Estrategia de despliegue elegida para producción real y plan de rollback
+
+### Deployment pattern: Recreate en ventana de mantenimiento de la tarde
+
+Para esta aplicación en producción real, la estrategia elegida es **Recreate** (apagar la versión vieja, levantar la nueva), ejecutada durante la **ventana de la tarde** (entre el servicio del mediodía y el servicio nocturno del restaurante).
+
+**Justificación:**
+- El restaurante opera en dos turnos claros: mediodía (~12:00-15:00) y noche (~20:00-23:00). La tarde (15:00-19:00) es una ventana natural sin usuarios activos, lo que hace que el tiempo de inactividad del Recreate (aproximadamente 2 minutos en Render) sea completamente invisible para los clientes.
+- **Costo**: Recreate es la estrategia más simple de operar. No requiere infraestructura duplicada (como Blue-Green) ni un balanceador de carga sofisticado (como Canary). En un free tier de Render, no hay recursos para mantener dos ambientes de producción corriendo simultáneamente.
+- **Riesgo**: bajo, dado que el deploy ocurre fuera del horario operativo. Si algo falla, se ejecuta el rollback (ver abajo) antes de que abra el turno de la noche.
+- **Rollback**: al ser una sola instancia, el rollback es inmediato: se dispara el hook con el SHA del commit anterior.
+
+**Por qué no Blue-Green ni Canary**: Blue-Green requiere tener dos ambientes de producción idénticos corriendo en paralelo (el doble del costo). Canary requiere un balanceador de carga que pueda dividir el tráfico por porcentaje. Ninguno de los dos es viable en el free tier actual, y ninguno agrega valor real si el deploy ya ocurre en horario sin usuarios.
+
+### Plan de rollback paso a paso
+
+Si tras un deploy a producción el smoke test falla o se detecta un problema en el turno de la noche:
+
+1. Identificar el SHA del commit estable anterior (el tag de la release previa o el commit inmediatamente anterior en `main`):
+   ```bash
+   export SHA_ANTERIOR=$(git rev-list -n1 v6.0.0)
+   ```
+2. Leer los deploy hooks de PROD desde las variables de entorno o desde los secrets de GitHub (en una máquina con acceso):
+   ```bash
+   read -rs HOOK_API_PROD && export HOOK_API_PROD
+   read -rs HOOK_FRONT_PROD && export HOOK_FRONT_PROD
+   ```
+3. Disparar el rollback del backend y del frontend al commit estable:
+   ```bash
+   curl -fsS "$HOOK_API_PROD&ref=$SHA_ANTERIOR"; echo
+   curl -fsS "$HOOK_FRONT_PROD&ref=$SHA_ANTERIOR"; echo
+   ```
+4. Verificar que Render muestra el deploy del commit anterior como `Live`.
+5. Confirmar manualmente que `/api/health` responde y que la app funciona.
+
+**Tiempo medido de rollback**: el rollback realizado durante el TP tomó **~2 minutos** entre el inicio del deploy y el estado `Live` en Render (Deploy Started: September 30, 2026 a las 13:02 hs → Deploy Live: September 30, 2026 a las 13:04 hs).
+
+---
+
+## Problemas encontrados y cómo los resolviste
+
+1. **Smoke test con 404 en el primer deploy**: el smoke test fallaba porque la URL configurada era `$URL_API/health` pero el backend de Go registra la ruta bajo `/api/health` (con el prefijo del grupo). Se corrigió la URL a `$URL_API/api/health` en el `ci.yml`.
+
+2. **Problema al renombrar nginx.conf a default.conf.template**: al renombrar el archivo de configuración de Nginx para que coincida con el mecanismo de plantillas nativo de `nginx:alpine`, el `Dockerfile` del frontend quedó apuntando al nombre viejo (`COPY nginx.conf ...`). Se actualizó el `COPY` del Dockerfile para usar el nuevo nombre.
+
+4. **Variable `${DNS_RESOLVER}` no definida en el compose**: al agregar la directiva `resolver ${DNS_RESOLVER}` al template de Nginx, el contenedor fallaba al arrancar en local porque esa variable no estaba en el `.env`. Se resolvió agregando el valor por defecto en el `Dockerfile` del frontend (`ENV DNS_RESOLVER=127.0.0.11`) y documentando en `.env.example` que en entornos cloud debe cambiarse a un DNS público.
+
+5. **Segundo deploy a PROD con endpoints mal configurados**: en el primer deploy a producción el smoke test del job `deploy-prod` tenía configuradas las URLs de QA en vez de las de PROD. Se detectó al revisar el `ci.yml` y se corrigieron las variables de entorno del job de PROD para apuntar a `https://miapp-api-prod-5djk.onrender.com` y `https://miapp-front-prod-kdsx.onrender.com`.
+
+---
+
+## Declaración de uso de IA
+
+Utilicé **Antigravity** (IA) como asistente principal durante todo el TP6. El rol fue de par de programación permanente: yo tomé todas las decisiones de diseño y arquitectura, y la IA implementó, analizó y diagnosticó problemas concretos.
+
+Usos específicos:
+- Diagnosticó por qué la imagen no aparecía en GitHub Packages a partir del log de la corrida de CI.
+- Analizó el `ci.yml` e identificó que el smoke test llamaba a `/health` en vez de `/api/health`.
+- Explicó la diferencia entre el enfoque con `if:` en el step de build vs. la condición embebida en `push:`.
+- Detectó los tres problemas del nuevo `default.conf.template` (Dockerfile desactualizado, variable DNS_RESOLVER sin valor, y omisión de headers de proxy).
+- Implementó el campo `version` en el endpoint `/api/health` modificando `config.go` y `main.go`.
+- Redactó esta sección de `decisiones.md` en base a la información que yo fui aportando durante la sesión de trabajo.
+
+**Cómo lo verifiqué:**
+- El fix del smoke test (`/health` → `/api/health`) lo verifiqué corriendo `curl -fsS https://miapp-api-qa-w60e.onrender.com/api/health` desde la terminal antes de hacer el commit, confirmando el `200 OK` con el JSON de respuesta.
+- Los cambios en `default.conf.template` y el `Dockerfile` los verifiqué levantando el stack local con `docker compose up --build` y navegando la app en `localhost:80`, confirmando que el frontend cargaba y el proxy al backend funcionaba correctamente.
+- El campo `version` en el health check lo verifiqué leyendo el código modificado en `config.go` y `main.go` línea por línea y corriendo `go test ./...` para confirmar que los tests existentes seguían en verde después del cambio.
+
