@@ -454,3 +454,169 @@ Usos específicos:
 - Los cambios en `default.conf.template` y el `Dockerfile` los verifiqué levantando el stack local con `docker compose up --build` y navegando la app en `localhost:80`, confirmando que el frontend cargaba y el proxy al backend funcionaba correctamente.
 - El campo `version` en el health check lo verifiqué leyendo el código modificado en `config.go` y `main.go` línea por línea y corriendo `go test ./...` para confirmar que los tests existentes seguían en verde después del cambio.
 
+# Decisiones TP7 – Contenedores en el Pipeline, Integración y Pruebas e2e
+
+## Enlaces del TP7
+
+### 1. Paquetes públicos del Container Registry (ghcr.io)
+- **Backend:** https://github.com/franciscotaurian/ingsoft3-tp01/pkgs/container/ingsoft3-tp01-backend
+- **Frontend:** https://github.com/franciscotaurian/ingsoft3-tp01/pkgs/container/ingsoft3-tp01-frontend
+
+### 2. Evidencia Central del Gate de Promoción (Integración 🟢 / e2e 🔴)
+- **Commit que rompió el Front:** `d8054faf5de3bf71d88eb32a83dfc049af2f9041`
+- **Corrida donde falló e2e y frenó la promoción:** https://github.com/franciscotaurian/ingsoft3-tp01/actions/runs/38204489860
+- **Artefacto Reporte Integración (Verde):** `playwright-report-integracion` (sha256: `5b383e5dda2145703953cc81f92a9092aee2afbaaec8885cbab41c9c12f64d3d`)
+- **Artefacto Reporte e2e (Rojo):** `playwright-report-e2e` (sha256: `349942968161a6aefc38f6f86ef83a4cf8a67d32778ac7fd798f4ac274331685`)
+
+### 3. Corrida completa en verde posterior (hasta PROD)
+- **Corrida exitosa verificada y desplegada a PROD:** https://github.com/franciscotaurian/ingsoft3-tp01/actions/runs/38205040873
+
+### 4. URLs de los entornos en vivo
+| Entorno | Frontend | Backend |
+|---|---|---|
+| **QA** | https://ingsoft3-tp01.onrender.com | https://miapp-api-qa-w60e.onrender.com |
+| **PROD** | https://miapp-front-prod-kdsx.onrender.com | https://miapp-api-prod-5djk.onrender.com |
+
+---
+
+## 1. Build once, deploy many: La imagen como unidad de release
+
+### Problema que resuelve respecto al TP6
+En el TP6 la cadena de despliegue promovía *commits*: en cada deploy a QA y a PROD el pipeline disparaba un hook con `&ref=$GITHUB_SHA`, lo que provocaba que Render clonara el repositorio y **reconstruyera la aplicación desde cero** ejecutando `docker build`.
+Esto rompía el principio fundamental de reproducibilidad: **lo que llegaba a producción no era idéntico bit a bit a lo verificado en QA**. 
+Existía el riesgo latente de que dependencias externas resueltas en momentos distintos produjeran binarios dispares, o que variaciones en el tiempo de compilación generaran comportamientos imprevistos.
+
+En este TP7 cerramos ese hueco implementando el principio **Build Once, Deploy Many**:
+- El pipeline compila y empaqueta la aplicación **una sola vez** en la etapa de CI.
+- Las imágenes inmutables resultantes se publican en GitHub Container Registry (`ghcr.io`) bajo la etiqueta unívoca del commit (`sha-${{ github.sha }}`).
+- Tanto QA como PROD pasan a ser servicios **Image-backed**: Render no construye código; simplemente descarga y ejecuta **exactamente el mismo binario inmutable**.
+- Promover a producción ya no significa "volver a compilar en PROD", sino invocar el Deploy Hook de producción pasándole el parámetro `imgURL` apuntando a la misma imagen que QA verificó con sus suites de pruebas.
+
+---
+
+## 2. Estrategia de etiquetas e inmutabilidad
+
+### Qué garantiza cada etiqueta
+1. **`sha-<commit>` en ghcr.io:** Garantiza trazabilidad estricta y bidireccional entre el código fuente y el contenedor. Conociendo el commit, sabemos exactamente qué imagen le corresponde; conociendo la imagen, sabemos con precisión matemática qué commit de git la produjo. Es la etiqueta que el pipeline usa para promover entre entornos.
+2. **`v7.0.0` en git:** Es el nombre semántico de la release que corrió exitosamente en producción. Se coloca exclusivamente sobre el commit que está desplegado en producción (obtenido de *Deployments*), no a ciegas sobre el último commit de `main`.
+
+### Por qué el pipeline NO publica `latest`
+`latest` es un puntero mutable: hoy apunta a una imagen y mañana a otra. No ofrece ninguna garantía de contenido. Si el pipeline publicara `latest`, cualquier despliegue que lo referencie ejecutaría "lo último que se subió", sin importar si pasó las pruebas o si correspondió a una corrida intermedia. Con una única etiqueta por commit (`sha-...`), es imposible desplegar algo sin declarar explícitamente su identidad.
+
+### Configuración en Render Web vs lo que realmente corre
+En Render Web (*Settings → Existing Image*) configuramos los 4 servicios inicialmente con la imagen del primer merge verificado (`sha-e4f917f510...`).
+Sin embargo, **esa no es la imagen que corre actualmente**. Render utiliza esa configuración como plantilla base para validar el registry y el nombre del paquete. Cada vez que nuestro pipeline ejecuta el Deploy Hook pasándole `--data-urlencode "imgURL=..."`, Render sobreescribe la etiqueta y despliega la imagen nueva enviada por el hook.
+
+### Conservación de servicios existentes
+No creamos servicios nuevos en Render; en los 4 servicios existentes (APIs y Frontends de QA y PROD) editamos la fuente pasando de *Git Provider* a *Existing Image*. Esto permitió conservar las URLs públicas, las variables de entorno ya configuradas, los Deploy Hooks existentes y no duplicar el consumo de horas del plan gratuito (750 horas compartidas por workspace).
+
+---
+
+## 3. Trazabilidad: De la Release a la Imagen en un solo paso
+
+Para pasar del tag de la release `v7.0.0` a las imágenes exactas desplegadas en producción, basta un único comando de Git:
+```bash
+git rev-list -n1 v7.0.0
+```
+Este comando devuelve el SHA del commit (los 40 caracteres). Sabiendo que el pipeline publica las imágenes con la convención fija `sha-<commit>`, las imágenes exactas en el registry son de forma inmediata:
+- **Backend:** `ghcr.io/franciscotaurian/ingsoft3-tp01-backend:sha-<SHA>`
+- **Frontend:** `ghcr.io/franciscotaurian/ingsoft3-tp01-frontend:sha-<SHA>`
+
+---
+
+## 4. Verificación externa del entorno y limitaciones del Smoke Test
+
+### Cómo se comprueba desde afuera que el entorno ejecuta la imagen
+Se comprueba ingresando a la pestaña **Events** de cada servicio en Render:
+- El evento de despliegue indica textualmente: **«Triggered via Deploy Hook»** y nombra la imagen del registro con su etiqueta `sha-...`.
+- En un servicio que compila desde el repo, el evento indicaría «Deploying commit...» y registraría la fase de construcción de Docker.
+
+### Qué NO alcanza a probar el Smoke Test
+El smoke test realiza peticiones `curl` a `/api/health`, `/api/products` y `/`. Solo comprueba que el servicio **responde HTTP 200**.
+**Limitación:** Si un deploy en Render fallara silenciosamente y Render continuara sirviendo el contenedor anterior, el smoke test seguiría dando verde porque el entorno sigue vivo, sin poder advertir que no se levantó la imagen nueva. Tampoco prueba que los botones de la pantalla funcionen o que un formulario web se comunique adecuadamente con el backend.
+
+---
+
+## 5. Diseño de las Suites de Pruebas: Integración y e2e
+
+### Suite de Integración (`App/frontend/e2e/api.spec.js`)
+Ejecutada con el fixture `request` de Playwright, **sin navegador**, comunicándose directamente contra la API de QA (`API_BASE_URL`):
+1. **Alta, verificación y borrado:** Crea un producto administrativo con nombre único (`POST /api/admin/products`), verifica que la base de datos real lo expone en el catálogo (`GET /api/products`), lo elimina (`DELETE /api/admin/products/:id`) y comprueba que desapareció de la base.
+2. **Rechazo de payload inválido:** Envía un producto con datos inválidos (nombre vacío / precio negativo), comprueba que la API rechaza con `400 Bad Request` y verifica que la cantidad de registros en la base no se modificó.
+3. **Validación de regla de negocio en pedidos (elegida por el equipo):** Envía un pedido (`POST /api/orders`) con un teléfono con caracteres no numéricos. Comprueba que el backend aplica la regla estricta de regex y responde `400`.
+
+### Suite End-to-End (`App/frontend/e2e/products.spec.js`)
+Ejecutada con Chromium real contra el Frontend de QA (`E2E_BASE_URL`):
+1. **Flujo crítico de compra diario:** El usuario ingresa a la aplicación, selecciona un producto del catálogo, hace clic en "Agregar al Carrito", completa el formulario de entrega y presiona "Hacer Pedido por WhatsApp", comprobando el mensaje de confirmación y que el carrito se vacía.
+2. **Validación de formulario incompleto:** Intenta enviar el pedido sin completar los datos requeridos y verifica que la interfaz retiene el foco y previene el envío.
+3. **Flujo de administración y login (elegido por el equipo):** El usuario ingresa a la pestaña "Panel Admin", introduce las credenciales (`admin` / `admin123`), presiona "Ingresar", verifica el acceso al "Panel de Administración" con sus métricas y realiza el logout exitoso.
+
+### Qué NO pusimos en cada suite (Pirámide de Testing)
+- **No duplicamos pruebas unitarias:** Las validaciones de lógica pura de pedidos (`pedido.js`) y cálculo de descuentos ya están cubiertas en milisegundos en el TP5 con Vitest.
+- **En e2e no testeamos combinaciones exhaustivas:** Levantar un navegador real es costoso en tiempo y recursos. En e2e solo van los 3 flujos críticos indispensables del negocio.
+
+---
+
+## 6. Diagnóstico del par Verde/Rojo: Integración vs e2e
+
+En la rotura provocada intencionalmente en la aplicación, modificamos el texto del botón en `ProductCard.jsx` a `"Comprar Plato"`.
+
+El resultado del pipeline fue:
+- **Smoke test:** 🟢 VERDE (el servidor y la API responden 200).
+- **Integración:** 🟢 VERDE (la API Go y la base de datos PostgreSQL funcionan y responden perfecto a las llamadas directas).
+- **e2e:** 🔴 ROJO (el navegador no encontró el botón que el usuario necesita para operar).
+- **`deploy-prod`:** ⚪ BLOQUEADO (el gate impidió la promoción a producción).
+
+### Lectura diagnóstica (Tabla §2.5)
+| Integración | e2e | Diagnóstico |
+|---|---|---|
+| 🟢 | 🔴 | **El frontend está roto:** La API y la BD están sanas, pero la pantalla no utiliza o no presenta los controles correctamente. |
+| 🔴 | ⚪ (Salteado) | **La API o la base de datos están rotas:** El backend falló; la e2e ni siquiera llega a gastar un navegador. |
+| 🟢 | 🟢 | **Sistema íntegro:** Ambos niveles verificados. |
+
+Este par demostró el valor del diagnóstico: supimos inmediatamente que la falla residía en la interfaz del frontend sin necesidad de revisar el código del backend.
+
+---
+
+## 7. Integración Amplia vs Estrecha
+
+Elegimos la **Integración Amplia** (hablarle a la API de QA ya desplegada en Render con su base PostgreSQL real):
+- **Ventajas:** Máximo realismo; prueba la aplicación en condiciones de red reales, con el driver de PostgreSQL real y la infraestructura del proveedor cloud, sin necesidad de orquestar bases de datos temporales en el runner.
+- **Desventajas:** Depende de que el entorno de QA esté disponible y despierto (cold start); las corridas deben ser secuenciales para no colisionar datos.
+- **Frente a la Integración Estrecha (en memoria en el runner):** La estrecha sería más rápida y aislada, pero requeriría levantar contenedores de base de datos descartables en GitHub Actions y no probaría el despliegue real en la nube.
+
+---
+
+## 8. Cold Start, Timeouts y Tests Flaky
+
+En el plan gratuito de Render, las instancias se suspenden tras periodos de inactividad. Para evitar falsos negativos:
+- Configuramos `timeout: 60_000` (60 segundos) por test y `expect: { timeout: 15_000 }` en `playwright.config.js`.
+- Configuramos `retries: 1` para absorber demoras transitorias de red.
+- **Test Flaky:** Es un test que a veces pasa y a veces falla sin cambios en el código. Es sumamente perjudicial porque acostumbra al equipo a desestimar las alertas rojas. Playwright marca explícitamente en el reporte cuando un test requirió un retry para pasar, permitiendo auditar la estabilidad.
+
+---
+
+## 9. Una sola imagen de Frontend para QA y PROD
+
+La imagen de frontend empaqueta los archivos estáticos compilados de React servidos por Nginx (`nginx:alpine`):
+- **Adentro de la imagen:** Los assets estáticos de producción (`dist/`) y la plantilla de Nginx (`default.conf.template`).
+- **Configurado por variable de entorno:** `BACKEND_URL` y `DNS_RESOLVER`. 
+En tiempo de arranque del contenedor, Nginx sustituye `${BACKEND_URL}` con la URL de la API correspondiente (QA o PROD). De esta forma, **la misma imagen inmutable funciona en ambos entornos** sin necesidad de recompilar el frontend.
+
+---
+
+## 10. Problemas encontrados y cómo los resolvimos
+
+1. **Conexión rechazada `ECONNREFUSED 127.0.0.1:8080` en local:** El contenedor backend no exponía el puerto al host. Se mapeó `ports: - "8080:8080"` en `App/docker-compose.yml` para permitir pruebas locales directas sin intermediación de Nginx.
+2. **Fallo de suite e2e por falta de datos en QA:** En la primera corrida remota en QA, la suite e2e falló por timeout al encontrar el catálogo vacío. Se resolvió ingresando al Panel Admin de QA, creando una categoría y un producto con stock, y utilizando "Re-run failed jobs" en GitHub Actions.
+3. **Ajuste de aserciones en e2e:** La redirección hacia WhatsApp requería asertar inmediatamente el mensaje `¡Pedido confirmado correctamente!` y el vaciado del carrito antes del cambio de URL del navegador.
+
+---
+
+## 11. Declaración de uso de IA
+
+Durante el desarrollo del Trabajo Práctico 07 se utilizó **Antigravity** como asistente de pair programming.
+- **Rol de la IA:** Asistencia en la adaptación de la guía oficial (.NET) a nuestro stack (Go + React), diagnóstico de errores de conexión y colisión de runners, y soporte en la redacción técnica.
+- **Verificación humana:** Todas las pruebas fueron ejecutadas, comprobadas y validadas directamente en mi terminal local y en las corridas de GitHub Actions y Render Web.
+
+
