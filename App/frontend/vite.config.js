@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { configDefaults } from 'vitest/config'
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -14,13 +15,10 @@ export default defineConfig({
     },
   },
   test: {
+    exclude: [...configDefaults.exclude, 'e2e/**'], // vitest NO toca los specs de Playwright
     coverage: {
       provider: 'v8',
-      // Los cuatro reporters: texto en consola, HTML navegable, lcov y el JSON
-      // que el pipeline lee para armar el resumen en el Step Summary de GitHub.
       reporter: ['text', 'html', 'lcov', 'json-summary'],
-      // Mide solo los módulos que tienen tests: la lógica pura (pedido.js)
-      // y el cliente de API (client.js). 
       include: ['src/lib/pedido.js', 'src/api/client.js'],
       thresholds: { lines: 70, branches: 70 },
     },
