@@ -25,7 +25,7 @@ export default function ProductCard({ product, onAddToCart, cartQuantity }) {
           onClick={() => onAddToCart(product)}
           disabled={isOutOfStock}
         >
-          {isOutOfStock ? 'Sin Stock' : 'Agregar al Carrito'}
+          {isOutOfStock ? 'Sin Stock' : 'Comprar Plato'}
         </button>
       </div>
     </div>
