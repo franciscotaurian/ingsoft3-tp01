@@ -192,10 +192,76 @@ jobs:
           done
           echo "❌ QA no respondió a tiempo"; exit 1
 
+  integracion:
+    runs-on: ubuntu-latest
+    needs: deploy-qa                       # QA ya está ejecutando la imagen de ESTA corrida
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: App/frontend/package-lock.json
+
+      - name: Install (sin browser)
+        run: npm ci                        # ← sin playwright install: no abre navegador
+        working-directory: ./App/frontend
+
+      - name: Integración contra la api de QA
+        env:
+          API_BASE_URL: https://miapp-api-qa-w60e.onrender.com    # ⚠️ Tu API de QA
+        run: npx playwright test e2e/api.spec.js
+        working-directory: ./App/frontend
+
+      - name: Publicar reporte de integración
+        uses: actions/upload-artifact@v6
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report-integracion   # Nombre único para no chocar con e2e
+          path: App/frontend/playwright-report
+          retention-days: 7
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: integracion                     # Si la api está rota, no gastamos un browser en confirmarlo
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: App/frontend/package-lock.json
+
+      - name: Install + browser
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+        working-directory: ./App/frontend
+
+      - name: e2e contra QA
+        env:
+          E2E_BASE_URL: https://ingsoft3-tp01.onrender.com        # ⚠️ Tu Front de QA
+        run: npx playwright test e2e/products.spec.js             # Ejecuta solo el spec de UI
+        working-directory: ./App/frontend
+
+      - name: Publicar reporte e2e
+        uses: actions/upload-artifact@v6
+        if: ${{ !cancelled() }}            # Sube el reporte también si falla para poder diagnosticar
+        with:
+          name: playwright-report-e2e
+          path: App/frontend/playwright-report
+          retention-days: 7
+
   deploy-prod:
     runs-on: ubuntu-latest
-    needs: deploy-qa                            # PROD solo después de QA vivo
-    environment: production                     # ⏸ acá el workflow SE PAUSA hasta el approve
+    needs: e2e                             # ← EL GATE: sin e2e verde, ni pide aprobación
+    environment: production                # ⏸ El revisor de producción sigue activo
     concurrency: { group: deploy-prod, cancel-in-progress: false }
     steps:
       - name: Deploy de la MISMA imagen a PROD
@@ -211,7 +277,7 @@ jobs:
 
       - name: Smoke test PROD
         shell: bash
-        env:               # ⚠️ TUS URLs de PROD
+        env:
           URL_API: https://miapp-api-prod-5djk.onrender.com
           URL_FRONT: https://miapp-front-prod-kdsx.onrender.com
         run: |
