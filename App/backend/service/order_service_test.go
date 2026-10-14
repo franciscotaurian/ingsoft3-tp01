@@ -8,17 +8,22 @@ package service
 //   R-C: El pedido debe tener al menos un ítem
 //   R-E: No se puede superar el stock disponible
 //   R-F: Transiciones de estado permitidas del pedido
+//   R-G: CancelOrder restaura el stock vía CancelWithStockRestore (transacción atómica)
 //
 // Técnicas del TP:
 //   ✅ Parametrizado : TestCreate_ValidaQueLosDatosDelClienteSeanObligatorios,
 //                      TestCreate_ValidaFormatoTelefono,
 //                      TestUpdateStatus_TransicionesDeEstadoValidas,
-//                      TestUpdateStatus_TransicionInvalidaEsRechazada
+//                      TestUpdateStatus_TransicionInvalidaEsRechazada,
+//                      TestCancelOrder_InvalidStatus
 //   ✅ Caso de error  : TestCreate_ValidaFormatoTelefono, TestCreate_PedidoSinItemsEsRechazado,
-//                      TestUpdateStatus_TransicionInvalidaEsRechazada
-//   ✅ Mock           : TestCreate_LlamaAlRepositorioConStockDescontado
+//                      TestUpdateStatus_TransicionInvalidaEsRechazada,
+//                      TestCancelOrder_NotFound, TestCancelOrder_RepositoryError
+//   ✅ Mock           : TestCreate_LlamaAlRepositorioConStockDescontado,
+//                      TestCancelOrder_Success_LlamaCancelWithStockRestore
 
 import (
+	"errors"
 	"testing"
 
 	"realico-comidas-backend/models"
@@ -299,25 +304,34 @@ func TestUpdateStatus_TransicionInvalidaEsRechazada(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Test 8 — CancelOrder: Éxito (Estado Pendiente)
+// Test 8 — CancelOrder: Éxito - llama a CancelWithStockRestore (R-G)
+//
+// Verifica que al cancelar un pedido en estado pendiente:
+//   - Se llama a CancelWithStockRestore (no a UpdateStatus directamente)
+//   - Se retorna la orden actualizada sin error
 // ─────────────────────────────────────────────────────────────────────────────
 
-func TestCancelOrder_Success(t *testing.T) {
+func TestCancelOrder_Success_LlamaCancelWithStockRestore(t *testing.T) {
 	// Arrange
 	mockOrderRepo := &MockOrderRepository{}
-	order := &models.Order{ID: 1, Status: models.OrderStatusPendiente}
+	orderPendiente := &models.Order{ID: 5, Status: models.OrderStatusPendiente}
+	orderCancelada := &models.Order{ID: 5, Status: models.OrderStatusCancelado}
 
-	mockOrderRepo.On("FindByID", uint(1)).Return(order, nil)
-	mockOrderRepo.On("UpdateStatus", uint(1), models.OrderStatusCancelado).Return(nil)
+	// FindByID: primera llamada para validar estado, segunda para retornar resultado
+	mockOrderRepo.On("FindByID", uint(5)).Return(orderPendiente, nil).Once()
+	mockOrderRepo.On("CancelWithStockRestore", uint(5)).Return(nil)
+	mockOrderRepo.On("FindByID", uint(5)).Return(orderCancelada, nil).Once()
 
 	svc := NewOrderService(mockOrderRepo, &MockProductRepository{})
 
 	// Act
-	resultado, err := svc.CancelOrder(1)
+	resultado, err := svc.CancelOrder(5)
 
 	// Assert
 	assert.NoError(t, err)
 	assert.NotNil(t, resultado)
+	assert.Equal(t, models.OrderStatusCancelado, resultado.Status)
+	// Verifica que CancelWithStockRestore fue llamado exactamente una vez
 	mockOrderRepo.AssertExpectations(t)
 }
 
@@ -328,7 +342,7 @@ func TestCancelOrder_Success(t *testing.T) {
 func TestCancelOrder_NotFound(t *testing.T) {
 	// Arrange
 	mockOrderRepo := &MockOrderRepository{}
-	
+
 	// Simulamos que el repositorio devuelve error al buscar
 	mockOrderRepo.On("FindByID", uint(1)).Return((*models.Order)(nil), ErrOrderNotFound)
 
@@ -339,10 +353,13 @@ func TestCancelOrder_NotFound(t *testing.T) {
 
 	// Assert
 	assert.ErrorIs(t, err, ErrOrderNotFound)
+	mockOrderRepo.AssertExpectations(t)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Test 10 — CancelOrder: Caso de error (Parametrizado) - Estado inválido
+// Test 10 — CancelOrder: Caso de error (Parametrizado) - Estado inválido (R-G)
+//
+// Un pedido confirmado, entregado o ya cancelado NO puede cancelarse.
 // ─────────────────────────────────────────────────────────────────────────────
 
 func TestCancelOrder_InvalidStatus(t *testing.T) {
@@ -352,7 +369,7 @@ func TestCancelOrder_InvalidStatus(t *testing.T) {
 	}{
 		{"cancelar_confirmado", models.OrderStatusConfirmado},
 		{"cancelar_entregado", models.OrderStatusEntregado},
-		{"cancelar_cancelado", models.OrderStatusCancelado},
+		{"cancelar_ya_cancelado", models.OrderStatusCancelado},
 	}
 
 	for _, c := range casos {
@@ -360,8 +377,9 @@ func TestCancelOrder_InvalidStatus(t *testing.T) {
 			// Arrange
 			mockOrderRepo := &MockOrderRepository{}
 			order := &models.Order{ID: 1, Status: c.estadoActual}
-			
+
 			// FindByID devuelve la orden con el estado actual
+			// CancelWithStockRestore NO debe ser llamado: la validación de estado falla antes
 			mockOrderRepo.On("FindByID", uint(1)).Return(order, nil)
 
 			svc := NewOrderService(mockOrderRepo, &MockProductRepository{})
@@ -371,6 +389,35 @@ func TestCancelOrder_InvalidStatus(t *testing.T) {
 
 			// Assert
 			assert.ErrorIs(t, err, ErrInvalidStatusChange)
+			// Verificar que CancelWithStockRestore nunca fue invocado
+			mockOrderRepo.AssertNotCalled(t, "CancelWithStockRestore")
 		})
 	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test 11 — CancelOrder: Error en repositorio al cancelar (R-G)
+//
+// Si CancelWithStockRestore falla (ej: error de DB), el error se propaga.
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestCancelOrder_RepositoryError(t *testing.T) {
+	// Arrange
+	mockOrderRepo := &MockOrderRepository{}
+	orderPendiente := &models.Order{ID: 3, Status: models.OrderStatusPendiente}
+	errDB := errors.New("error de base de datos")
+
+	mockOrderRepo.On("FindByID", uint(3)).Return(orderPendiente, nil)
+	mockOrderRepo.On("CancelWithStockRestore", uint(3)).Return(errDB)
+
+	svc := NewOrderService(mockOrderRepo, &MockProductRepository{})
+
+	// Act
+	resultado, err := svc.CancelOrder(3)
+
+	// Assert
+	assert.Nil(t, resultado)
+	assert.Error(t, err)
+	assert.Equal(t, errDB, err)
+	mockOrderRepo.AssertExpectations(t)
 }

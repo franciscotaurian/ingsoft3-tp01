@@ -87,3 +87,45 @@ test('crear pedido con teléfono inválido es rechazado por la lógica de negoci
     });
     expect(res.status()).toBe(400);
 });
+
+test('crear un pedido decrementa el stock y cancelarlo desde admin lo restaura', async ({ request }) => {
+    const lista = await listarProductos(request);
+    test.skip(lista.length === 0, 'No hay productos disponibles para probar pedidos');
+
+    const producto = lista[0];
+    const stockInicial = producto.stock;
+    test.skip(stockInicial < 1, 'El producto no tiene stock suficiente para la prueba');
+
+    // 1. Crear pedido consumiendo 1 unidad
+    const resPedido = await request.post(`${API}/api/orders`, {
+        data: {
+            customer_name: `Cliente Integracion ${Date.now()}`,
+            customer_phone: '3512345678',
+            customer_address: 'Calle Integracion 456',
+            items: [
+                { product_id: producto.id, quantity: 1 }
+            ]
+        }
+    });
+    expect(resPedido.status()).toBe(201);
+    const pedidoCreado = await resPedido.json();
+    expect(pedidoCreado.id).toBeDefined();
+
+    // 2. Verificar que el stock decrementó en la BD real
+    const listaPostPedido = await listarProductos(request);
+    const prodPostPedido = listaPostPedido.find(p => p.id === producto.id);
+    expect(prodPostPedido.stock).toBe(stockInicial - 1);
+
+    // 3. Cancelar el pedido vía endpoint administrativo
+    const resCancel = await request.post(`${API}/api/admin/orders/${pedidoCreado.id}/cancel`, {
+        headers: { Authorization: ADMIN_AUTH }
+    });
+    expect(resCancel.status()).toBe(200);
+    const pedidoCancelado = await resCancel.json();
+    expect(pedidoCancelado.status).toBe('cancelado');
+
+    // 4. Verificar que el stock fue restaurado a su valor original en la BD
+    const listaFinal = await listarProductos(request);
+    const prodFinal = listaFinal.find(p => p.id === producto.id);
+    expect(prodFinal.stock).toBe(stockInicial);
+});

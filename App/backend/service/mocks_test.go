@@ -44,6 +44,11 @@ func (m *MockOrderRepository) UpdateStatus(id uint, status string) error {
 	return args.Error(0)
 }
 
+func (m *MockOrderRepository) CancelWithStockRestore(id uint) error {
+	args := m.Called(id)
+	return args.Error(0)
+}
+
 func (m *MockOrderRepository) GetMetrics() (*repository.MetricsData, error) {
 	args := m.Called()
 	if args.Get(0) == nil {
