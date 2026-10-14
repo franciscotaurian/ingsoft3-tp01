@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getAdminProducts, createProduct, updateProduct, deleteProduct } from '../api/products';
 import { getCategories, createCategory, updateCategory, deleteCategory } from '../api/categories';
-import { getOrders, updateOrderStatus, getAdminMetrics } from '../api/orders';
+import { getOrders, updateOrderStatus, cancelOrder, getAdminMetrics } from '../api/orders';
 
 import MetricsCards from '../components/MetricsCards';
 import CategoryForm from '../components/CategoryForm';
@@ -150,6 +150,19 @@ export default function Admin({ onAuthChange }) {
     try {
       await updateOrderStatus(orderId, nextStatus, authHeader);
       setSuccessMessage(`Pedido #${orderId} actualizado a "${nextStatus}".`);
+      loadAdminData();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleOrderCancel = async (orderId) => {
+    if (!window.confirm(`¿Seguro que deseas cancelar el pedido #${orderId}? Se restaurará el stock de los productos.`)) return;
+    setError('');
+    setSuccessMessage('');
+    try {
+      await cancelOrder(orderId, authHeader);
+      setSuccessMessage(`Pedido #${orderId} cancelado y stock restaurado.`);
       loadAdminData();
     } catch (err) {
       setError(err.message);
@@ -399,13 +412,22 @@ export default function Admin({ onAuthChange }) {
                   </td>
                   <td>
                     {ord.status === 'pendiente' && (
-                      <button
-                        className="btn"
-                        style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}
-                        onClick={() => handleStatusAdvance(ord.id, ord.status)}
-                      >
-                        Confirmar Pedido ➔
-                      </button>
+                      <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                        <button
+                          className="btn"
+                          style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}
+                          onClick={() => handleStatusAdvance(ord.id, ord.status)}
+                        >
+                          Confirmar Pedido ➔
+                        </button>
+                        <button
+                          className="btn btn-danger"
+                          style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}
+                          onClick={() => handleOrderCancel(ord.id)}
+                        >
+                          Cancelar Pedido ✕
+                        </button>
+                      </div>
                     )}
                     {ord.status === 'confirmado' && (
                       <button
@@ -418,6 +440,9 @@ export default function Admin({ onAuthChange }) {
                     )}
                     {ord.status === 'entregado' && (
                       <span style={{ color: '#27ae60', fontSize: '0.85rem', fontWeight: 'bold' }}>✓ Finalizado</span>
+                    )}
+                    {ord.status === 'cancelado' && (
+                      <span style={{ color: '#e74c3c', fontSize: '0.85rem', fontWeight: 'bold' }}>✕ Sin acciones</span>
                     )}
                   </td>
                 </tr>

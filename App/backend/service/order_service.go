@@ -174,8 +174,9 @@ func (s *orderService) CancelOrder(id uint) (*models.Order, error) {
 		return nil, fmt.Errorf("%w: no se puede cancelar un pedido en estado '%s'", ErrInvalidStatusChange, order.Status)
 	}
 
-	err = s.orderRepo.UpdateStatus(id, models.OrderStatusCancelado)
-	if err != nil {
+	// CancelWithStockRestore cancela el pedido y devuelve el stock de cada ítem
+	// en una única transacción atómica (operación inversa a CreateWithTx)
+	if err = s.orderRepo.CancelWithStockRestore(id); err != nil {
 		return nil, err
 	}
 

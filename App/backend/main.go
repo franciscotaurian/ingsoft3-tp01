@@ -87,6 +87,7 @@ func main() {
 			// Pedidos Admin (historial protegido: requiere autenticación de administrador)
 			admin.GET("/orders", orderHandler.GetAll)
 			admin.PATCH("/orders/:id/status", orderHandler.UpdateStatus)
+			admin.POST("/orders/:id/cancel", orderHandler.CancelOrder)
 
 			// Métricas Admin
 			admin.GET("/metrics", metricsHandler.GetMetrics)

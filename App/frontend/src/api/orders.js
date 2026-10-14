@@ -22,6 +22,13 @@ export function updateOrderStatus(id, status, authHeader) {
   });
 }
 
+export function cancelOrder(id, authHeader) {
+  return fetchApi(`/api/admin/orders/${id}/cancel`, {
+    method: 'POST',
+    headers: { Authorization: authHeader },
+  });
+}
+
 export function getAdminMetrics(authHeader) {
   return fetchApi('/api/admin/metrics', {
     headers: { Authorization: authHeader },

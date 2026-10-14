@@ -84,3 +84,20 @@ func (h *OrderHandler) UpdateStatus(c *gin.Context) {
 
 	c.JSON(http.StatusOK, order)
 }
+
+func (h *OrderHandler) CancelOrder(c *gin.Context) {
+	idParam := c.Param("id")
+	id, err := strconv.ParseUint(idParam, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID de pedido inválido"})
+		return
+	}
+
+	order, err := h.orderService.CancelOrder(uint(id))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, order)
+}

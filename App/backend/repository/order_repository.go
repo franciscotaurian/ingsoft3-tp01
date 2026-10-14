@@ -19,6 +19,7 @@ type OrderRepository interface {
 	FindByID(id uint) (*models.Order, error)
 	CreateWithTx(order *models.Order, stockUpdates map[uint]int) error
 	UpdateStatus(id uint, status string) error
+	CancelWithStockRestore(id uint) error
 	GetMetrics() (*MetricsData, error)
 }
 
@@ -65,6 +66,33 @@ func (r *orderRepository) CreateWithTx(order *models.Order, stockUpdates map[uin
 
 func (r *orderRepository) UpdateStatus(id uint, status string) error {
 	return r.db.Model(&models.Order{}).Where("id = ?", id).Update("status", status).Error
+}
+
+// CancelWithStockRestore cancela un pedido y restaura el stock de cada ítem
+// en una única transacción atómica. Es la operación inversa a CreateWithTx.
+func (r *orderRepository) CancelWithStockRestore(id uint) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// 1. Cargar la orden con sus ítems (necesitamos las cantidades para restaurar stock)
+		var order models.Order
+		if err := tx.Preload("Items").First(&order, id).Error; err != nil {
+			return err
+		}
+
+		// 2. Cambiar el estado del pedido a cancelado
+		if err := tx.Model(&models.Order{}).Where("id = ?", id).Update("status", models.OrderStatusCancelado).Error; err != nil {
+			return err
+		}
+
+		// 3. Restaurar el stock de cada producto sumando la cantidad del ítem
+		for _, item := range order.Items {
+			if err := tx.Model(&models.Product{}).Where("id = ?", item.ProductID).
+				Update("stock", gorm.Expr("stock + ?", item.Quantity)).Error; err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
 }
 
 func (r *orderRepository) GetMetrics() (*MetricsData, error) {
