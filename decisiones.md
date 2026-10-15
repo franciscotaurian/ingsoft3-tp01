@@ -544,10 +544,11 @@ Ejecutada con el fixture `request` de Playwright, **sin navegador**, comunicánd
 1. **Alta, verificación y borrado:** Crea un producto administrativo con nombre único (`POST /api/admin/products`), verifica que la base de datos real lo expone en el catálogo (`GET /api/products`), lo elimina (`DELETE /api/admin/products/:id`) y comprueba que desapareció de la base.
 2. **Rechazo de payload inválido:** Envía un producto con datos inválidos (nombre vacío / precio negativo), comprueba que la API rechaza con `400 Bad Request` y verifica que la cantidad de registros en la base no se modificó.
 3. **Validación de regla de negocio en pedidos (elegida por el equipo):** Envía un pedido (`POST /api/orders`) con un teléfono con caracteres no numéricos. Comprueba que el backend aplica la regla estricta de regex y responde `400`.
+4. **Ciclo completo de stock (decremento y restauración):** Crea un pedido real que descuenta stock en la BD, comprueba que el stock disponible disminuyó exactamente en la cantidad pedida, y luego invoca el endpoint administrativo de cancelación (`POST /api/admin/orders/:id/cancel`) verificando que el stock de la base de datos real vuelve a su valor original.
 
 ### Suite End-to-End (`App/frontend/e2e/products.spec.js`)
 Ejecutada con Chromium real contra el Frontend de QA (`E2E_BASE_URL`):
-1. **Flujo crítico de compra diario:** El usuario ingresa a la aplicación, selecciona un producto del catálogo, hace clic en "Agregar al Carrito", completa el formulario de entrega y presiona "Hacer Pedido por WhatsApp", comprobando el mensaje de confirmación y que el carrito se vacía.
+1. **Flujo crítico de compra diario con cleanup y stock inmutable:** El usuario ingresa a la aplicación, registra el stock inicial visible en la tarjeta del producto, lo agrega al carrito, completa los datos de entrega y confirma el pedido. Posteriormente, para cumplir con el principio de **idempotencia y cleanup**, el test navega al Panel Admin, se autentica, ubica la orden creada por el cliente de la prueba y presiona **"Cancelar Pedido ✕"**. Finalmente, regresa al catálogo y comprueba con aserción estricta de Playwright que el stock en pantalla retornó exactamente a su valor inicial.
 2. **Validación de formulario incompleto:** Intenta enviar el pedido sin completar los datos requeridos y verifica que la interfaz retiene el foco y previene el envío.
 3. **Flujo de administración y login (elegido por el equipo):** El usuario ingresa a la pestaña "Panel Admin", introduce las credenciales (`admin` / `admin123`), presiona "Ingresar", verifica el acceso al "Panel de Administración" con sus métricas y realiza el logout exitoso.
 
@@ -610,13 +611,32 @@ En tiempo de arranque del contenedor, Nginx sustituye `${BACKEND_URL}` con la UR
 1. **Conexión rechazada `ECONNREFUSED 127.0.0.1:8080` en local:** El contenedor backend no exponía el puerto al host. Se mapeó `ports: - "8080:8080"` en `App/docker-compose.yml` para permitir pruebas locales directas sin intermediación de Nginx.
 2. **Fallo de suite e2e por falta de datos en QA:** En la primera corrida remota en QA, la suite e2e falló por timeout al encontrar el catálogo vacío. Se resolvió ingresando al Panel Admin de QA, creando una categoría y un producto con stock, y utilizando "Re-run failed jobs" en GitHub Actions.
 3. **Ajuste de aserciones en e2e:** La redirección hacia WhatsApp requería asertar inmediatamente el mensaje `¡Pedido confirmado correctamente!` y el vaciado del carrito antes del cambio de URL del navegador.
+4. **Consumo progresivo de stock en QA y necesidad de Cleanup:** Los tests E2E deben ser idempotentes y dejar el sistema exactamente como lo encontraron. Cada pedido ejecutado por la prueba restaba stock de forma permanente, por lo que en sucesivas corridas el inventario se agotaba inevitablemente. Se diseñó e implementó la funcionalidad completa de cancelación administrativa con restauración de stock transaccional en backend y frontend, incorporando el paso de cleanup en el test.
 
 ---
 
 ## 11. Declaración de uso de IA
 
 Durante el desarrollo del Trabajo Práctico 07 se utilizó **Antigravity** como asistente de pair programming.
-- **Rol de la IA:** Asistencia en la adaptación de la guía oficial (.NET) a nuestro stack (Go + React), diagnóstico de errores de conexión y colisión de runners, y soporte en la redacción técnica.
-- **Verificación humana:** Todas las pruebas fueron ejecutadas, comprobadas y validadas directamente en mi terminal local y en las corridas de GitHub Actions y Render Web.
+- **Rol de la IA:** Asistencia en la adaptación de la guía oficial (.NET) a nuestro stack (Go + React), diagnóstico de errores de conexión y colisión de runners, diseño de la transacción atómica de restauración de stock, diagnóstico del *strict mode violation* en Playwright y soporte en la redacción técnica.
+- **Verificación humana:** Todas las pruebas (unitarias, integración y e2e) fueron ejecutadas, comprobadas y validadas directamente en mi terminal local y en las corridas de GitHub Actions y Render Web.
+
+---
+
+## 12. Idempotencia y Cleanup en Pruebas e2e: Restauración Atómica de Stock y Mejora de Cobertura
+
+### 12.1 Justificación Teórica y Regla de Idempotencia
+Una suite de pruebas automatizadas contra un entorno compartido (como QA en Render) no puede ser destructiva con los datos de prueba. Si un test consume recursos no renovables (como stock de inventario) sin restaurarlos:
+- La suite se vuelve dependiente del orden de ejecución.
+- Genera fallos intermitentes (*flaky tests*) cuando el stock llega a cero.
+- Obliga a una intervención manual periódica para "recargar datos", lo cual rompe la autonomía del pipeline de Integración Continua.
+
+### 12.3 Incremento de Cobertura en Backend (del 68.1% al 84.1%)
+Al incorporar los tests unitarios con formato **AAA** (Arrange-Act-Assert) y Mocks:
+- `CancelOrder` quedó cubierto al **100%** (`TestCancelOrder_Success_LlamaCancelWithStockRestore`, `TestCancelOrder_NotFound`, `TestCancelOrder_InvalidStatus` parametrizado).
+- Diagnosticamos que `ProductService` tenía baja cobertura (41.2% en `Create` y 44.0% en `Update`) porque los tests anteriores solo verificaban rechazos tempranos (errores de validación inicial), cortando en las primeras 4 líneas sin recorrer jamás el **camino feliz** (*happy path*).
+- Agregamos tests AAA con mocks para la creación y edición exitosa de productos con categorías (`TestCreate_Exitoso_GuardaProducto`, `TestUpdate_Exitoso`, y validaciones de categorías obligatorias y existentes), excluyendo lecturas triviales o tests de infraestructura ajenos a la lógica de negocio.
+- **Resultado:** La cobertura en `service` subió al **84.1%** de sentencias (`Create` al 94.1% y `Update` al 96.0%), superando holgadamente el umbral de calidad del 70% exigido.
+
 
 
