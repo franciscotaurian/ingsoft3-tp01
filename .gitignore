@@ -18,3 +18,9 @@ Thumbs.db
 coverage/
 playwright-report/
 test-results/
+
+# --- Terraform (TP8) ---
+*.tfstate
+*.tfstate.*
+.terraform/
+*.tfvars
