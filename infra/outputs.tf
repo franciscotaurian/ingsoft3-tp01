@@ -17,3 +17,5 @@ output "front_url" {
   description = "URL pública del Frontend de preprod en Render"
   value       = render_web_service.front.url
 }
+
+# Outputs verificados para el entorno de preprod
