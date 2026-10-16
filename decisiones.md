@@ -638,5 +638,47 @@ Al incorporar los tests unitarios con formato **AAA** (Arrange-Act-Assert) y Moc
 - Agregamos tests AAA con mocks para la creación y edición exitosa de productos con categorías (`TestCreate_Exitoso_GuardaProducto`, `TestUpdate_Exitoso`, y validaciones de categorías obligatorias y existentes), excluyendo lecturas triviales o tests de infraestructura ajenos a la lógica de negocio.
 - **Resultado:** La cobertura en `service` subió al **84.1%** de sentencias (`Create` al 94.1% y `Update` al 96.0%), superando holgadamente el umbral de calidad del 70% exigido.
 
+# Decisiones TP8 – Infraestructura como Código (IaC)
 
+## 1. Riel Elegido y Versiones de Providers Fijadas
+
+- **Riel:** Canónico (Terraform + Neon para PostgreSQL + Render para Web Services).
+- **Herramienta:** Terraform (>= 1.5).
+- **Entorno aprovisionado:** `preprod` (entorno nuevo, efímero e independiente; QA y PROD no se modificaron ni importaron, permaneciendo intactos).
+- **Providers fijados:**
+  - `kislerdm/neon`: versión `0.18.0` (fijada explícitamente debido al estado archivado del repositorio comunitario y la espera de la publicación del provider oficial `neondatabase/neon`).
+  - `render-oss/render`: versión `1.9.1`.
+- **Higiene de estado y credenciales:**
+  - El estado (`terraform.tfstate`) vive exclusivamente en la máquina local y está excluido de Git mediante `.gitignore` para evitar la filtración de credenciales sensibles (passwords de Neon en texto plano).
+  - Las credenciales (`NEON_API_KEY`, `RENDER_API_KEY`, `RENDER_OWNER_ID`) se inyectan mediante variables de entorno en la terminal y mediante *Repository Secrets* en GitHub Actions, sin estar escritas en ningún archivo `.tf`.
+  - El archivo `.terraform.lock.hcl` sí se versiona en Git para asegurar paridad de hashes y versiones entre operadores y CI.
+
+## 2. Problemas Encontrados y Cómo los Resolvimos
+
+1. **Límite de retención de historial en Neon (Free Tier):**
+   - *Problema:* El provider `kislerdm/neon` solicita por defecto 86400 segundos (24 horas) de retención para Point-in-Time Recovery. La capa gratuita de Neon admite un máximo de 21600 segundos (6 horas). El primer `plan`/`apply` fallaba con `requested history retention seconds exceeds allowed maximum`.
+   - *Solución:* Se configuró explícitamente `history_retention_seconds = 21600` en el recurso `neon_project.preprod`.
+2. **Adaptación de la cadena de conexión para Go / GORM:**
+   - *Problema:* La guía presenta el ejemplo en .NET con `ConnectionStrings__Default` (formato clave-valor con punto y coma). Nuestra aplicación backend está desarrollada en Go y utiliza la variable de entorno `DATABASE_URL` con formato URI de PostgreSQL.
+   - *Solución:* Se definió `DATABASE_URL = { value = local.conn }` en `main.tf`, donde `local.conn` se deriva dinámicamente como `postgres://${neon_role.preprod.name}:${neon_role.preprod.password}@${neon_project.preprod.database_host}/${neon_database.preprod.name}?sslmode=require`. No se copiaron credenciales a mano.
+3. **Owner ID inválido en Render:**
+   - *Problema:* Al ejecutar el primer `apply` contra Render, el provider rechazó el `RENDER_OWNER_ID` configurado inicialmente (`usr-...`) indicando que el ID no era válido para el aprovisionamiento de servicios de ese workspace.
+   - *Solución:* Se consultó directamente el endpoint `/v1/owners` de Render mediante `curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" https://api.render.com/v1/owners`, extrayendo el ID exacto del workspace asociado a la clave de API y actualizando la variable de entorno.
+4. **Plan del Pipeline vs. Estado Local (Sección 3.6 Opcional):**
+   - *Problema:* Al implementar el workflow de GitHub Actions (`infra.yml`), el job `infra-plan` reporta `5 to add` a pesar de que los recursos ya existen en Neon y Render.
+   - *Solución:* Se comprendió que el runner de CI arranca sin estado porque `terraform.tfstate` vive en la máquina local y está en `.gitignore`. Para que un pipeline ejecute diffs incrementales o haga `apply` automático, requeriría un *Remote Backend* compartido (ej. S3, Azure Blob o HCP Terraform) y gates de aprobación.
+5. **Cuota compartida del Free Tier de Render (750 horas/mes) y estrategia de entornos efímeros:**
+   - *Problema:* El plan gratuito de Render comparte 750 horas mensuales entre todos los servicios del workspace. Al sumar preprod pasamos de 4 a 6 servicios, lo que aumentaría el riesgo de suspensión de todo el workspace (incluyendo producción). Además, el provider de Render rechaza modificaciones en servicios gratuitos por el bug de `maintenance_mode`.
+   - *Solución:* Se adoptó la estrategia de entornos efímeros: preprod no se modifica "in place" sino que se destruye (`terraform destroy`) cuando no está en uso y se recrea (`terraform apply`) a demanda, garantizando que QA y PROD sigan siempre disponibles para la cursada y la defensa.
+
+## 3. Declaración de Uso de IA
+
+Durante el desarrollo del Trabajo Práctico 08 se utilizó **Antigravity** como asistente de pair programming.
+- **Rol de la IA:** 
+  - Explicación conceptual y pedagógica de los fundamentos de IaC: modelo declarativo vs. imperativo, idempotencia, el estado como fuente de correlación y no de verdad, drift y su alcance real.
+  - Adaptación técnica del HCL al stack Go + GORM (`DATABASE_URL`).
+  - Diagnóstico del error de autorización de Render Owner ID mediante la API REST de Render.
+  - Diseño e implementación del workflow opcional de GitHub Actions (`infra.yml`) con jobs desacoplados (`infra-check` e `infra-plan`).
+- **Verificación humana:** 
+  - Todos los comandos (`init`, `fmt`, `validate`, `plan`, `apply`, `destroy`), las pruebas de drift (borrado manual en Neon, prueba de la `base_intrusa`), las comprobaciones de red de seguridad (`prevent_destroy`), las peticiones `curl` a endpoints de vida (`/api/health`) y base de datos (`/api/products`), y la verificación de aislamiento respecto a QA y PROD fueron ejecutadas, comprobadas y validadas directamente por el alumno.
 
