@@ -1,0 +1,40 @@
+name: Infra
+
+on:
+  pull_request:
+    paths: ["infra/**"]        # Corre sólo cuando alguien modifica la infraestructura
+  workflow_dispatch:           # Permite ejecutarlo a mano desde la pestaña Actions
+
+env:                           # Los providers leen estas variables automáticamente
+  NEON_API_KEY:    ${{ secrets.NEON_API_KEY }}
+  RENDER_API_KEY:  ${{ secrets.RENDER_API_KEY }}
+  RENDER_OWNER_ID: ${{ secrets.RENDER_OWNER_ID }}
+
+jobs:
+  infra-check:
+    runs-on: ubuntu-latest     # fmt y validate no necesitan credenciales
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: Formato
+        run: terraform -chdir=infra fmt -check
+      - name: Init (sin backend) + validate
+        run: |
+          terraform -chdir=infra init -backend=false
+          terraform -chdir=infra validate
+
+  infra-plan:
+    runs-on: ubuntu-latest
+    needs: infra-check         # Solo corre si el check de formato y sintaxis dio verde
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: Plan
+        run: |
+          terraform -chdir=infra init
+          terraform -chdir=infra plan -no-color | tee plan.txt
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: tf-plan
+          path: infra/plan.txt
