@@ -89,11 +89,6 @@ func main() {
 		})
 	})
 
-	// Endpoint de prueba temporal para Sentry (§3.5 de la guía - sacar al terminar el TP)
-	r.GET("/api/falla", func(c *gin.Context) {
-		panic("Falla de prueba del TP9 para verificar Sentry en producción")
-	})
-
 	// 6. Definir Rutas
 	api := r.Group("/api")
 	{

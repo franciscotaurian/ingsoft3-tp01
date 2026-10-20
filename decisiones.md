@@ -682,3 +682,60 @@ Durante el desarrollo del Trabajo Práctico 08 se utilizó **Antigravity** como 
 - **Verificación humana:** 
   - Todos los comandos (`init`, `fmt`, `validate`, `plan`, `apply`, `destroy`), las pruebas de drift (borrado manual en Neon, prueba de la `base_intrusa`), las comprobaciones de red de seguridad (`prevent_destroy`), las peticiones `curl` a endpoints de vida (`/api/health`) y base de datos (`/api/products`), y la verificación de aislamiento respecto a QA y PROD fueron ejecutadas, comprobadas y validadas directamente por el alumno.
 
+# Decisiones TP9 – DevSecOps + Observabilidad + Continuous Feedback
+
+## 1. Actualización de Dependabot (SCA) y Criterio de Confianza
+
+- **Pull Request mergeado:** PR #67 (`chore(deps-dev): bump @playwright/test from 1.64.0 to 1.64.1 in /App/frontend`).
+- **Qué actualizaba:** Actualizó la suite de pruebas e2e `@playwright/test` en el frontend (`App/frontend/package.json`) de la versión `1.64.0` a la `1.64.1`.
+- **Análisis SemVer:** Se trató de una actualización de tipo **PATCH** (incremento del tercer dígito). Según Semantic Versioning, un parche contiene exclusivamente correcciones de errores (*bug fixes*), garantizando compatibilidad hacia atrás sin breaking changes ni modificaciones de API.
+- **Detalle del changelog:** Corrigió dos problemas puntuales del motor de pruebas:
+  1. Un fallo intermitente al capturar la primera ventana en aplicaciones empaquetadas con Electron (`#43247`).
+  2. Una regresión en Chromium 155+ donde se abortaban redirecciones *cross-origin* cuando había rutas interceptadas (`#43242`).
+- **Por qué me animé a mergearlo:** Al ser una `devDependency` que corre los tests e2e en el pipeline y no código empaquetado en el bundle final que viaja al cliente en producción, no existía riesgo de regresión funcional para el usuario final. Además, todo el pipeline de Integración Continua (build de contenedores, tests unitarios, umbral de cobertura del 70% y suite de integración) corrió sobre la rama de Dependabot y finalizó en **verde**, confirmando empíricamente que la nueva versión del test runner mantiene la estabilidad y compatibilidad de las pruebas existentes.
+
+---
+
+## 2. Observabilidad: Monitor Externo y Telemetría con Sentry
+
+### Monitor Externo (UptimeRobot) y Caída
+- **Configuración:** Monitor HTTP(s) externo apuntando a `https://miapp-api-prod-5djk.onrender.com/api/health`, con sondeo cada 5 minutos y notificación vía email.
+- **Tiempo de detección y duración de la caída:** El monitor detectó el incidente en su primer ciclo de sondeo (~5 minutos), y la caída total registrada en el historial y en el correo de alerta fue de **35 minutos y 35 segundos**.
+- **Causa del incidente real:** El plan gratuito de UptimeRobot realiza peticiones mediante el método HTTP `HEAD` (para optimizar ancho de banda solicitando solo cabeceras). Por defecto, el router Gin de Go no mapea `HEAD` en rutas registradas con `r.GET` si `HandleMethodNotAllowed` está desactivado, respondiendo `404 Not Found`.
+- **Mitigación y recuperación:** Se refactorizó la ruta de salud usando `r.Match([]string{"GET", "HEAD"}, "/api/health", ...)` en conjunto con la instrumentación de Sentry. El tiempo de 35 minutos reflejó el ciclo completo de la ingeniería del sistema: detección por el monitor ➔ diagnóstico del método HTTP ➔ desarrollo de la solución ➔ corrida completa del pipeline de CI/CD (QA, smoke tests, integración, e2e, aprobación y deploy en PROD) ➔ siguiente ciclo de sondeo del monitor donde confirmó el `200 OK` y emitió automáticamente la alerta de **UP**. El monitor fue **pausado** inmediatamente tras la prueba para preservar la cuota mensual de 750 horas de Render.
+
+### Telemetría de Producción (Sentry)
+- **Operación más lenta:** `GET /api/admin/metrics`, registrando una latencia **P95 de 1.023 segundos** (1023 ms). El percentil P95 indica que el 5% de las solicitudes más lentas tardaron más de un segundo, atribuible a consultas de agregación sobre PostgreSQL sin cacheo. Con este dato se abrió una tarjeta de optimización en el tablero Kanban del TP3 para cerrar el ciclo de Continuous Feedback.
+- **Operación más usada:** `GET /api/products`, con un volumen inferior a `0.01 req/min` debido al tráfico acotado de pruebas de la cursada.
+- **Error provocado:** Se verificó la captura del `panic` en el endpoint de prueba `/api/falla` en la sección *Issues* de Sentry, reportando archivo, línea exacta y stack trace completo sin tumbar el proceso del servidor gracias al middleware `sentrygin`.
+
+---
+
+## 3. Seguridad Estática (CodeQL) y Protección de Secretos (Push Protection)
+
+- **Push Protection (Capa 1):** Se comprobó el bloqueo en tiempo real intentando pushear a una rama remota un Personal Access Token (PAT) real sin permisos en un archivo de texto. GitHub bloqueó el push de forma preventiva (`remote: error: GH013: Repository rule violations found - GHE004: Push cannot contain secrets`), demostrando que las credenciales con firmas conocidas no ingresan al historial del repositorio. Posteriormente la rama fue eliminada localmente y el token revocado.
+- **CodeQL (Capa 3 - SAST):** El escaneo por defecto de CodeQL identificó dos hallazgos principales en el repositorio:
+  1. *Workflow permissions missing:* Ausencia de declaración explícita de permisos de menor privilegio en ciertos jobs de GitHub Actions.
+  2. *Uso de hash criptográfico inseguro (OWASP A02: Cryptographic Failures):* Identificó el uso de SHA-256 para el almacenamiento de contraseñas de administradores. Se analizó que SHA-256 es una función diseñada para ser rápida en verificación de integridad, pero vulnerable a ataques de fuerza bruta asistidos por hardware (GPU/ASIC) cuando se aplica a contraseñas, recomendándose su migración a algoritmos con factor de costo ajustable como `bcrypt` o `argon2`.
+
+---
+
+## 4. Problemas Encontrados y Soluciones
+
+1. **Rechazo de HEAD por Gin en UptimeRobot:**
+   - *Problema:* UptimeRobot marcaba la API de producción como DOWN con código 404 a pesar de que el servicio estaba operativo.
+   - *Causa:* Gin aísla las rutas por método HTTP. Un `r.GET` no atiende peticiones `HEAD`.
+   - *Solución:* Se utilizó `r.Match([]string{"GET", "HEAD"}, "/api/health", ...)` permitiendo que el endpoint atienda ambos métodos transparentemente.
+---
+
+## 5. Declaración de Uso de IA
+
+Durante el desarrollo del Trabajo Práctico 09 se utilizó **Antigravity** como asistente de pair programming.
+- **Rol de la IA:**
+  - Explicación pedagógica de los conceptos centrales: Shift-Left Security, las 3 capas automáticas (secretos, dependencias y código propio), blackbox monitoring vs. observabilidad interna (logs, métricas y trazas), percentiles P50/P95, y el ciclo de continuous feedback.
+  - Asesoramiento en la adaptación del SDK de Sentry para Go (`sentry-go` + `sentry-go/gin`) y React (`@sentry/react`).
+  - Diagnóstico del comportamiento de Gin frente al método HTTP HEAD utilizado por UptimeRobot.
+  - Redacción del cuerpo de la issue para el tablero Kanban y consolidación de la sección de decisiones.
+- **Verificación humana:**
+  - Todas las configuraciones en las interfaces web (GitHub Advanced Security, CodeQL, UptimeRobot, Sentry y Render) fueron realizadas y validadas por el alumno.
+  - La ejecución de comandos locales, la creación de ramas, la verificación de los bloqueos de push, el análisis del PR de Dependabot #67 y las pruebas en producción fueron ejecutadas y comprobadas directamente por el alumno.
