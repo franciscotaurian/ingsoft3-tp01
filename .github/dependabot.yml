@@ -1,0 +1,28 @@
+version: 2
+updates:
+  # --- Backend en Go ---
+  - package-ecosystem: "gomod"          # Go usa "gomod", no "go" ni "nuget"
+    directory: "/App/backend"           # donde está tu go.mod
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "backend"
+
+  # --- Frontend en React/Vite ---
+  - package-ecosystem: "npm"
+    directory: "/App/frontend"          # donde está tu package.json
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "frontend"
+
+  # --- Las Actions de tu CI también son dependencias ---
+  - package-ecosystem: "github-actions"
+    directory: "/"                      # siempre la raíz — lee .github/workflows/
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "ci"
