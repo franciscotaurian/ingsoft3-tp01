@@ -64,7 +64,7 @@ jobs:
           if awk -v cov="$COVERAGE" -v thr="70" 'BEGIN { exit (cov >= thr) ? 0 : 1 }'; then exit 0; else exit 1; fi
 
       - name: Publicar coverage y resultados
-        uses: actions/upload-artifact@v6   # la del video; ya existe la v7, y cualquiera de las dos anda
+        uses: actions/upload-artifact@v7   # la del video; ya existe la v7, y cualquiera de las dos anda
         if: ${{ !cancelled() }}
         with:
           name: coverage-report
@@ -136,7 +136,7 @@ jobs:
           " >> $GITHUB_STEP_SUMMARY
 
       - name: Publicar el coverage del frontend
-        uses: actions/upload-artifact@v6   # la del video; ya existe la v7, y cualquiera de las dos anda
+        uses: actions/upload-artifact@v7   # la del video; ya existe la v7, y cualquiera de las dos anda
         if: ${{ !cancelled() }}
         with:
           name: coverage-frontend
@@ -217,7 +217,7 @@ jobs:
         working-directory: ./App/frontend
 
       - name: Publicar reporte de integración
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
           name: playwright-report-integracion   # Nombre único para no chocar con e2e
@@ -251,7 +251,7 @@ jobs:
         working-directory: ./App/frontend
 
       - name: Publicar reporte e2e
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}            # Sube el reporte también si falla para poder diagnosticar
         with:
           name: playwright-report-e2e
