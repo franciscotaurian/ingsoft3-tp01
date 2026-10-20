@@ -14,7 +14,7 @@ jobs:
   infra-check:
     runs-on: ubuntu-latest     # fmt y validate no necesitan credenciales
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v3
       - name: Formato
         run: terraform -chdir=infra fmt -check
@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: infra-check         # Solo corre si el check de formato y sintaxis dio verde
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v3
       - name: Plan
         run: |
