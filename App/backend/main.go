@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
+	"time"
 
 	"realico-comidas-backend/config"
 	"realico-comidas-backend/database"
@@ -11,6 +13,8 @@ import (
 	"realico-comidas-backend/repository"
 	"realico-comidas-backend/service"
 
+	"github.com/getsentry/sentry-go"
+	sentrygin "github.com/getsentry/sentry-go/gin"
 	"github.com/gin-gonic/gin"
 )
 
@@ -49,16 +53,45 @@ func main() {
 	orderHandler := handler.NewOrderHandler(orderService)
 	metricsHandler := handler.NewMetricsHandler(orderService)
 
+	// Inicializar Sentry (si existe la variable de entorno)
+	sentryDsn := os.Getenv("SENTRY_DSN")
+	if sentryDsn != "" {
+		if err := sentry.Init(sentry.ClientOptions{
+			Dsn:              sentryDsn,
+			EnableTracing:    true,
+			TracesSampleRate: 1.0, // medir 100% de las transacciones en demo
+			Environment:      "production",
+		}); err != nil {
+			log.Printf("Advertencia: No se pudo inicializar Sentry: %v", err)
+		} else {
+			log.Println("Sentry inicializado correctamente")
+		}
+		defer sentry.Flush(2 * time.Second)
+	}
+
+	// 5. Configurar Router Gin
 	// 5. Configurar Router Gin
 	r := gin.Default()
 
-	// Ruta de salud
-	r.GET("/api/health", func(c *gin.Context) {
+	// Middleware de Sentry para captura de errores y performance
+	if sentryDsn != "" {
+		r.Use(sentrygin.New(sentrygin.Options{
+			Repanic: true,
+		}))
+	}
+
+	// Ruta de salud (soporta GET y HEAD para UptimeRobot)
+	r.Match([]string{"GET", "HEAD"}, "/api/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{
 			"status":  "ok",
 			"app":     "Realico Comidas API",
 			"version": cfg.Version,
 		})
+	})
+
+	// Endpoint de prueba temporal para Sentry (§3.5 de la guía - sacar al terminar el TP)
+	r.GET("/api/falla", func(c *gin.Context) {
+		panic("Falla de prueba del TP9 para verificar Sentry en producción")
 	})
 
 	// 6. Definir Rutas
