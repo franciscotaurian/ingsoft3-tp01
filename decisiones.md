@@ -184,7 +184,7 @@ Filtrando esas funciones, la cobertura real sobre el código que importa fue de 
 
 Sobre **ramas** (`branches`): no usé esa métrica como umbral en el backend porque `go tool cover` no la expone directamente de forma nativa. Sin embargo, revisando el reporte HTML manualmente, estimé que la cobertura de ramas ronda el **65%**, lo cual es coherente con que hay varios caminos del tipo `if err != nil` que no ejercita ningún test.
 
-**Frontend:** Umbral de **80% sobre líneas, funciones, ramas y sentencias** configurado vía Vitest. La cobertura real cerró en **97.22%** porque los módulos testeados son pequeños y su lógica está muy acotada.
+**Frontend:** Umbral de **70% sobre líneas y ramas (`lines: 70, branches: 70`)** configurado en `vite.config.js` vía `@vitest/coverage-v8`. La cobertura real cerró muy por encima (**97.22%**) porque los módulos testeados (`src/lib/pedido.js` y `src/api/client.js`) tienen lógica pura y acotada.
 
 ## Qué dejé afuera de la cuenta de cobertura
 
@@ -199,7 +199,7 @@ Sobre **ramas** (`branches`): no usé esa métrica como umbral en el backend por
 **Frontend:**
 
 - **Componentes React (`.jsx`):** Son capas de presentación. Testearlos requeriría herramientas extras como `@testing-library/react` y en la práctica testean más el renderizado visual que la lógica de negocio.
-- La herramienta se configuró para apuntar únicamente a `src/pedido.js` y `src/client.js` mediante el atributo `include` de la configuración de Vitest.
+- La herramienta se configuró para apuntar únicamente a `src/lib/pedido.js` y `src/api/client.js` mediante el atributo `include` de la configuración de Vitest.
 
 ## Por qué coverage alto no garantiza calidad
 
@@ -238,6 +238,8 @@ https://github.com/franciscotaurian/ingsoft3-tp01/pull/25 (PR abierto en rojo po
 ## Refactorizacion para mockear
 
 La aplicación ya estaba organizada con inyección de dependencias desde el TP2, por lo que no fue necesario refactorizar para habilitar los mocks. Cada servicio recibe sus repositorios por el constructor (NewOrderService(orderRepo, productRepo)), lo cual permite sustituirlos por dobles de prueba en los tests sin tocar el código de producción.
+
+
 
 ## Reglas de negocio agregadas
 La aplicación ya tenía lógica de negocio real (validación de stock, formato de teléfono, transiciones de estado de pedidos). Sin embargo, para el ejercicio del freno de cobertura, agregué dos funcionalidades nuevas:
@@ -312,6 +314,11 @@ Si se publicara aunque los tests fallen, el registry dejaría de ser una fuente 
 
 La misma lógica aplica a la rama: la condición `push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}` garantiza que solo los commits que llegaron a `main` (es decir, que pasaron por una PR con CI verde) generan una imagen publicada. Un commit de una rama de feature nunca produce un paquete en el registry.
 
+**Los tres eslabones de la cadena y qué NO garantizan:**
+La confiabilidad del registry se sostiene por tres controles encadenados en la configuración: (1) nada entra a `main` sin los checks del PR y el umbral de cobertura en verde, (2) solo los eventos `push` sobre `refs/heads/main` habilitan la publicación, y (3) el step de construir y publicar la imagen final está ubicado **al final del mismo job que corrió los tests** (sin `always()` ni `!cancelled()`), por lo que si un test falla el job se corta antes de llegar al push.
+Sin embargo, esta cadena tiene dos límites que hay que conocer:
+- **No impide un `docker push` manual:** Garantiza lo que publica *el pipeline*, pero alguien con permisos de escritura en el paquete podría subir una imagen a mano desde su terminal salteando el CI.
+- **Las etiquetas (tags) son mutables:** Un tag como `sha-...` o `latest` puede ser sobreescrito en el registry; la única referencia criptográfica verdaderamente inmutable del contenido exacto de una imagen es su **digest** (`@sha256:...`).
 
 ## Continuous Delivery vs. Continuous Deployment
 
@@ -355,16 +362,20 @@ Antes de aprobar el pase a producción, el aprobador verifica:
 3. **Ventana operativa**: el deploy se realiza en el horario permitido (tarde, entre el servicio del mediodía y el servicio nocturno del restaurante). No se aprueban pases en fin de semana ni fuera del horario de soporte.
 4. **Sin cambios destructivos pendientes**: si el commit incluye migraciones de base de datos irreversibles, se verifica previamente que existe un plan de rollback de datos.
 
+5. **Práctica del rechazo y límites de visibilidad del aprobador:** Se practicó el rechazo explícito de un despliegue en el environment `production` dejando asentado el motivo en el comentario de la corrida, comprobando que el job `deploy-prod` se cancela/falla sin exponer los secrets ni tocar producción. Asimismo, el aprobador sabe qué **no** puede ver desde la pantalla de GitHub: un `deploy-qa` en verde solo garantiza que los 3 `curl` del smoke test devolvieron HTTP 200, pero no detecta regresiones visuales ni errores funcionales que el smoke no consulta.
+
 ## La letra chica del free tier y cómo la maneja el pipeline
 
 **Render (free tier):**
 - **Cold start**: el backend tarda entre 30 y 60 segundos en despertar cuando no recibió tráfico en los últimos 15 minutos. El smoke test maneja esto con un loop de hasta 30 reintentos con `sleep 20` entre cada uno (hasta 10 minutos de espera total) y `--max-time 10` por cada `curl` para no colgarse si el servicio acepta la conexión pero no responde.
 - **Sleep automático**: los servicios gratuitos se duermen tras 15 minutos sin tráfico. Para la defensa, conviene abrir las URLs manualmente antes para que estén despiertas.
-- **Minutos de build**: el free tier de Render incluye 750 horas/mes de compute. Cada deploy de backend tarda aproximadamente 2 minutos (el binario ya está compilado por GitHub Actions, pero Render reconstruye desde el repo).
+- **750 horas mensuales compartidas en el Workspace:** Las 750 horas gratuitas no son por servicio, sino compartidas entre todos los Web Services gratuitos de la cuenta. Con 4 servicios (backend y frontend en QA y PROD), si estuvieran activos 24/7 consumirían 2.880 horas al mes y Render suspendería todo el workspace; el presupuesto cierra únicamente gracias al sleep automático a los 15 minutos sin tráfico.
+- **500 minutos de build mensuales:** El plan gratuito de Render tiene un tope de 500 minutos de compilación al mes. En el TP6 cada deploy reconstruye los Dockerfiles consumiendo minutos de esa cuota (si se agota, los deploys quedan bloqueados hasta fin de mes).
 
 **Neon (free tier):**
 - La base de datos nunca se apaga (el proyecto free de Neon tiene una instancia activa permanente). No hay cold start en la BD.
 - El límite es de almacenamiento (0.5 GB) y compute hours, que con el volumen de este proyecto no se alcanzan.
+- **Por qué Neon y no el PostgreSQL de Render:** La base de datos PostgreSQL gratuita de Render **expira a los 30 días de su creación** (y se borra tras 14 días de gracia), por lo que no sirve para sostener los entornos durante el semestre; el plan gratuito de Neon no tiene vencimiento temporal.
 
 
 ## Garantía perdida: Render reconstruye desde el repo en vez de usar la imagen verificada
@@ -385,6 +396,7 @@ La garantía que se pierde es la siguiente: la imagen que corre en QA y en PROD 
 - Que la lógica de negocio funcione end-to-end (crear un pedido, descontar stock, etc.).
 - Que el frontend esté conectado correctamente al backend de ese entorno (podría estar apuntando al backend equivocado y el smoke test pasaría igual).
 - Que no haya regresiones visuales ni de UX.
+- El Deploy Hook responde inmediatamente que recibió la orden y Render compila en segundo plano; mientras tanto (o si ese build nuevo falla), Render sigue sirviendo el contenedor de la versión anterior. Por lo tanto, el smoke test puede dar `200 OK` en los primeros intentos contra la versión vieja sin enterarse de que la nueva todavía no terminó de subir.
 
 ## Estrategia de despliegue elegida para producción real y plan de rollback
 
@@ -423,6 +435,9 @@ Si tras un deploy a producción el smoke test falla o se detecta un problema en 
 
 **Tiempo medido de rollback**: el rollback realizado durante el TP tomó **~2 minutos** entre el inicio del deploy y el estado `Live` en Render (Deploy Started: September 30, 2026 a las 13:02 hs → Deploy Live: September 30, 2026 a las 13:04 hs).
 
+**Qué NO deshace este rollback (Base de datos):**
+Redesplegar el commit anterior vuelve atrás los contenedores de código en ~2 minutos, pero **no deshace los cambios en la base de datos de Neon**. Si el deploy que estamos revirtiendo ejecutó una migración destructiva (por ejemplo, borrar o renombrar una columna), el binario viejo fallará al querer leerla. Por eso los cambios de esquema requieren migraciones compatibles hacia atrás (*expand and contract*) o restaurar la base mediante Point-in-Time Recovery / branches de Neon.
+
 ---
 
 ## Problemas encontrados y cómo los resolviste
@@ -431,9 +446,9 @@ Si tras un deploy a producción el smoke test falla o se detecta un problema en 
 
 2. **Problema al renombrar nginx.conf a default.conf.template**: al renombrar el archivo de configuración de Nginx para que coincida con el mecanismo de plantillas nativo de `nginx:alpine`, el `Dockerfile` del frontend quedó apuntando al nombre viejo (`COPY nginx.conf ...`). Se actualizó el `COPY` del Dockerfile para usar el nuevo nombre.
 
-4. **Variable `${DNS_RESOLVER}` no definida en el compose**: al agregar la directiva `resolver ${DNS_RESOLVER}` al template de Nginx, el contenedor fallaba al arrancar en local porque esa variable no estaba en el `.env`. Se resolvió agregando el valor por defecto en el `Dockerfile` del frontend (`ENV DNS_RESOLVER=127.0.0.11`) y documentando en `.env.example` que en entornos cloud debe cambiarse a un DNS público.
+3. **Variable `${DNS_RESOLVER}` no definida en el compose**: al agregar la directiva `resolver ${DNS_RESOLVER}` al template de Nginx, el contenedor fallaba al arrancar en local porque esa variable no estaba en el `.env`. Se resolvió agregando el valor por defecto en el `Dockerfile` del frontend (`ENV DNS_RESOLVER=127.0.0.11`) y documentando en `.env.example` que en entornos cloud debe cambiarse a un DNS público.
 
-5. **Segundo deploy a PROD con endpoints mal configurados**: en el primer deploy a producción el smoke test del job `deploy-prod` tenía configuradas las URLs de QA en vez de las de PROD. Se detectó al revisar el `ci.yml` y se corrigieron las variables de entorno del job de PROD para apuntar a `https://miapp-api-prod-5djk.onrender.com` y `https://miapp-front-prod-kdsx.onrender.com`.
+4. **Segundo deploy a PROD con endpoints mal configurados**: en el primer deploy a producción el smoke test del job `deploy-prod` tenía configuradas las URLs de QA en vez de las de PROD. Se detectó al revisar el `ci.yml` y se corrigieron las variables de entorno del job de PROD para apuntar a `https://miapp-api-prod-5djk.onrender.com` y `https://miapp-front-prod-kdsx.onrender.com`.
 
 ---
 
@@ -506,6 +521,7 @@ En este TP7 cerramos ese hueco implementando el principio **Build Once, Deploy M
 ### Configuración en Render Web vs lo que realmente corre
 En Render Web (*Settings → Existing Image*) configuramos los 4 servicios inicialmente con la imagen del primer merge verificado (`sha-e4f917f510...`).
 Sin embargo, **esa no es la imagen que corre actualmente**. Render utiliza esa configuración como plantilla base para validar el registry y el nombre del paquete. Cada vez que nuestro pipeline ejecuta el Deploy Hook pasándole `--data-urlencode "imgURL=..."`, Render sobreescribe la etiqueta y despliega la imagen nueva enviada por el hook.
+**Peligro del botón *Manual Deploy* en Render:** Como la pantalla *Settings → Image* del dashboard conserva escrita la etiqueta inicial (`sha-e4f917f510...`) y los Deploy Hooks con `imgURL` no actualizan ese texto, si alguien presiona **"Manual Deploy"** desde el panel web de Render **provocará una regresión en producción o QA**, ya que Render volverá a desplegar aquella primera imagen vieja en lugar de la última promovida por el pipeline.
 
 ### Conservación de servicios existentes
 No creamos servicios nuevos en Render; en los 4 servicios existentes (APIs y Frontends de QA y PROD) editamos la fuente pasando de *Git Provider* a *Existing Image*. Esto permitió conservar las URLs públicas, las variables de entorno ya configuradas, los Deploy Hooks existentes y no duplicar el consumo de horas del plan gratuito (750 horas compartidas por workspace).
@@ -534,6 +550,8 @@ Se comprueba ingresando a la pestaña **Events** de cada servicio en Render:
 ### Qué NO alcanza a probar el Smoke Test
 El smoke test realiza peticiones `curl` a `/api/health`, `/api/products` y `/`. Solo comprueba que el servicio **responde HTTP 200**.
 **Limitación:** Si un deploy en Render fallara silenciosamente y Render continuara sirviendo el contenedor anterior, el smoke test seguiría dando verde porque el entorno sigue vivo, sin poder advertir que no se levantó la imagen nueva. Tampoco prueba que los botones de la pantalla funcionen o que un formulario web se comunique adecuadamente con el backend.
+
+
 
 ---
 
@@ -586,6 +604,7 @@ Elegimos la **Integración Amplia** (hablarle a la API de QA ya desplegada en Re
 - **Desventajas:** Depende de que el entorno de QA esté disponible y despierto (cold start); las corridas deben ser secuenciales para no colisionar datos.
 - **Frente a la Integración Estrecha (en memoria en el runner):** La estrecha sería más rápida y aislada, pero requeriría levantar contenedores de base de datos descartables en GitHub Actions y no probaría el despliegue real en la nube.
 
+- **Límite conocido de tener un único QA compartido entre corridas:** Si se realizan dos merges seguidos a `main` (corridas A y B), el `deploy-qa` de B puede redesplegar QA mientras las suites de `integracion` o `e2e` de A están corriendo. Esto puede hacer fallar a A o provocar un falso verde donde A pruebe parcialmente la imagen de B. Se reconoce comparando la imagen en *Events* de Render con la hora de ejecución en *Actions*; si ocurre, se rechaza manualmente la corrida A en el gate de producción (dado que `concurrency` en `deploy-prod` no cancela corridas en estado *Waiting for review*) y se aprueba únicamente la B, manteniendo la regla operativa de hacer un merge por vez.
 ---
 
 ## 8. Cold Start, Timeouts y Tests Flaky
@@ -653,6 +672,12 @@ Al incorporar los tests unitarios con formato **AAA** (Arrange-Act-Assert) y Moc
   - Las credenciales (`NEON_API_KEY`, `RENDER_API_KEY`, `RENDER_OWNER_ID`) se inyectan mediante variables de entorno en la terminal y mediante *Repository Secrets* en GitHub Actions, sin estar escritas en ningún archivo `.tf`.
   - El archivo `.terraform.lock.hcl` sí se versiona en Git para asegurar paridad de hashes y versiones entre operadores y CI.
 
+## 1.b Conceptos Clave Verificados (Declarativo, Idempotencia, Grafo y Drift)
+
+- **Modelo Declarativo e Idempotencia:** En `infra/main.tf` declaramos el estado final deseado (los 5 recursos de `preprod`) y no una secuencia imperativa de pasos. Verificamos la **idempotencia** ejecutando un segundo `terraform plan` y `apply` inmediatamente después de crear el entorno, obteniendo `No changes. Your infrastructure matches the configuration.` sin duplicar recursos ni arrojar errores.
+- **Grafo de dependencias y orden de destrucción:** Sin usar `depends_on` explícitos, Terraform armó el grafo de dependencias leyendo las referencias entre recursos (`neon_project.preprod.id`, `default_branch_id`, `local.conn` y `render_web_service.api.url`). Aunque el texto del `plan` lista los recursos en **orden alfabético**, al ejecutar `terraform destroy` comprobamos que los elimina recorriendo el **grafo en orden inverso**: primero el Frontend, luego la API, luego la base de datos y el rol, y por último el proyecto de Neon.
+- **Drift sobre lo declarado vs. lo no declarado:** Al borrar manualmente la base `app_preprod` en la consola de Neon, `terraform plan` refrescó el estado contra la API, detectó el **drift** y propuso recrearla (`Plan: 1 to add`). En cambio, al crear manualmente una `base_intrusa` no declarada en el HCL (al igual que ocurre con nuestros servicios preexistentes de QA y PROD), `terraform plan` siguió respondiendo `No changes`, demostrando que Terraform solo gobierna los recursos registrados en su `terraform.tfstate`.
+
 ## 2. Problemas Encontrados y Cómo los Resolvimos
 
 1. **Límite de retención de historial en Neon (Free Tier):**
@@ -683,6 +708,12 @@ Durante el desarrollo del Trabajo Práctico 08 se utilizó **Antigravity** como 
   - Todos los comandos (`init`, `fmt`, `validate`, `plan`, `apply`, `destroy`), las pruebas de drift (borrado manual en Neon, prueba de la `base_intrusa`), las comprobaciones de red de seguridad (`prevent_destroy`), las peticiones `curl` a endpoints de vida (`/api/health`) y base de datos (`/api/products`), y la verificación de aislamiento respecto a QA y PROD fueron ejecutadas, comprobadas y validadas directamente por el alumno.
 
 # Decisiones TP9 – DevSecOps + Observabilidad + Continuous Feedback
+
+
+## Enlaces del TP9
+- **PR de Dependabot analizado y mergeado (PR #67):** https://github.com/franciscotaurian/ingsoft3-tp01/pull/67
+- **Historial de ejecuciones de CI/CD y CodeQL:** https://github.com/franciscotaurian/ingsoft3-tp01/actions
+- **Release de cierre (`v9.0.1`):** https://github.com/franciscotaurian/ingsoft3-tp01/releases/tag/v9.0.1
 
 ## 1. Actualización de Dependabot (SCA) y Criterio de Confianza
 
